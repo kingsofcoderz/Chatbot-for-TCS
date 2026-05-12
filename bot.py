@@ -58,26 +58,25 @@ def get_xpin():
     url = "https://www.nationstates.net/cgi-bin/api.cgi"
 
     headers = {
-        "User-Agent": NS_CLIENT
+        "User-Agent": f"{NS_CLIENT} - Contact: your_email_or_discord",
     }
 
     data = {
         "a": "login",
-        "nation": NS_NATION.strip(),
-        "password": NS_PASSWORD.strip()
+        "nation": NS_NATION,
+        "password": NS_PASSWORD
     }
 
     r = requests.post(url, data=data, headers=headers)
 
-    print("Login response headers:", r.headers)
+    print("Status:", r.status_code)
+    print("Headers:", dict(r.headers))
+    print("Body:", r.text)
 
-    if "X-Pin" in r.headers:
-        xpin = r.headers["X-Pin"]
-        print("✔ X-Pin acquired")
-    else:
-        print("❌ Login failed response text:", r.text)
-        raise Exception("Failed to get X-Pin")
+    xpin = r.headers.get("X-Pin")
 
+    if not xpin:
+        raise Exception("Login failed: no X-Pin returned (check credentials or UA)")
 
 # =====================
 # 📥 FETCH RMB
