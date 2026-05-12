@@ -5,6 +5,11 @@ import xml.etree.ElementTree as ET
 import json
 from openai import OpenAI
 
+print("Bot starting...")
+print("NS_NATION:", NS_NATION)
+print("NS_REGION:", NS_REGION)
+print("OPENAI KEY EXISTS:", bool(OPENAI_API_KEY))
+
 API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =====================
@@ -204,4 +209,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print("CRASH ERROR:", e)
