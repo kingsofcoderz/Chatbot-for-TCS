@@ -43,24 +43,24 @@ def get_xpin():
     url = "https://www.nationstates.net/cgi-bin/api.cgi"
 
     headers = {
-        "User-Agent": f"{NS_CLIENT} (bot contact: example)"
+        "User-Agent": NS_CLIENT
     }
 
     data = {
-        "a": "login",
-        "nation": NS_NATION.lower().strip(),
-        "password": NS_PASSWORD.strip()
+        "nation": NS_NATION,
+        "password": NS_PASSWORD,
+        "a": "ping"
     }
 
     r = requests.post(url, data=data, headers=headers)
 
-    print("LOGIN STATUS:", r.status_code)
-    print("LOGIN RESPONSE:", r.text[:200])  # IMPORTANT DEBUG
+    print("STATUS:", r.status_code)
+    print("HEADERS:", r.headers)
 
     xpin = r.headers.get("X-Pin")
 
     if not xpin:
-        raise Exception("X-Pin failed - check nation/password format or UA")
+        raise Exception("No X-Pin returned")
 # =====================
 # RMB FETCH
 # =====================
