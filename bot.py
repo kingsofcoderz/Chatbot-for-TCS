@@ -53,36 +53,35 @@ def save_memory(mem):
 # =====================
 # LOGIN
 # =====================
-
 def get_xpin():
     global xpin
 
-    url = API_URL
+    url = "https://www.nationstates.net/cgi-bin/api.cgi"
 
     headers = {
         "User-Agent": NS_CLIENT
     }
 
-    data = {
+    params = {
         "a": "login",
         "nation": NS_NATION,
         "password": NS_PASSWORD
     }
 
-    r = requests.post(url, data=data, headers=headers)
+    r = requests.get(url, params=params, headers=headers)
 
     print("LOGIN STATUS:", r.status_code)
     print("LOGIN RESPONSE:", r.text[:200])
 
     if r.status_code != 200:
-        raise Exception("Login failed HTTP error")
+        raise Exception("Login failed HTTP")
 
     xpin = r.headers.get("X-Pin")
 
     if not xpin:
-        raise Exception("No X-Pin returned (login failed)")
+        raise Exception("No X-Pin returned")
 
-    print("LOGIN SUCCESS")
+    print("LOGIN OK")
 
 
 # =====================
