@@ -14,7 +14,6 @@ COPY . /app
 
 RUN pip3 install -r requirements.txt
 
-# pull model
-RUN ollama pull gemma:1b
+# ❌ DO NOT pull model here
 
-CMD ollama serve & python3 bot.py
+CMD ollama serve & sleep 5 && ollama pull gemma:1b && python3 bot.py
