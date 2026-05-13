@@ -33,6 +33,9 @@ if not NS_REGION:
 if not OPENAI_API_KEY:
     raise Exception("Missing OPENAI_API_KEY")
 
+if not OPENAI_API_KEY or not OPENAI_API_KEY.startswith("sk-"):
+    raise Exception("Invalid OpenAI API Key")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # =====================
