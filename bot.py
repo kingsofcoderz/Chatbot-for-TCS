@@ -31,16 +31,17 @@ print("Region:", NS_REGION)
 # =====================
 # FETCH RMB (FIXED)
 # =====================
-
 def fetch_rmb():
     try:
+        url = "https://www.nationstates.net/cgi-bin/api.cgi"
+
         r = requests.get(
-            API_URL,
-            params={
-                "a": "regiondata",
-                "region": NS_REGION,   # IMPORTANT: raw string only
-                "q": "messages"
-            },
+            url,
+            params=[
+                ("a", "regiondata"),
+                ("region", NS_REGION),
+                ("q", "messages")
+            ],
             headers={
                 "User-Agent": NS_CLIENT
             },
