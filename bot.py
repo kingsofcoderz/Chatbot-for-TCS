@@ -117,7 +117,7 @@ def post_rmb(message):
             "c": "rmbpost",
             "nation": NS_NATION,
             "region": NS_REGION,
-            "text": message[:500]
+            "message": message[:500]
         }
 
         headers = {
