@@ -6,135 +6,129 @@ import json
 from openai import OpenAI
 
 print("STARTING BOT...")
+print("ENV LOADED")
+
+API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =====================
 # ENV
 # =====================
-
 NS_NATION = os.getenv("NS_NATION")
 NS_PASSWORD = os.getenv("NS_PASSWORD")
 NS_REGION = os.getenv("NS_REGION")
 NS_CLIENT = os.getenv("NS_CLIENT")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-print("ENV LOADED")
-
-if not OPENAI_API_KEY:
-    raise Exception("Missing OPENAI key")
-
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
-
+# =====================
+# CONFIG
+# =====================
 POLL_INTERVAL = 120
 REPLY_DELAY = 10
 TRIGGER = "#chatgpt"
 
-seen_ids = set()
-xpin = None
-
+seen = set()
 
 # =====================
-# LOGIN
+# HEADERS BASE
 # =====================
-def get_xpin():
-    global xpin
-
-    url = "https://www.nationstates.net/cgi-bin/api.cgi"
-
-    headers = {
+def base_headers():
+    return {
         "User-Agent": NS_CLIENT,
-        "X-Password": NS_PASSWORD   # THIS IS THE KEY FIX
+        "X-Password": NS_PASSWORD
     }
 
-    params = {
-        "a": "ping"
-    }
-
-    r = requests.get(url, params=params, headers=headers)
-
-    print("STATUS:", r.status_code)
-    print("HEADERS:", dict(r.headers))
-
-    xpin = r.headers.get("X-Pin")
-
-    if not xpin:
-        raise Exception("Still no X-Pin (auth failed)")
 # =====================
-# RMB FETCH
+# FETCH RMB
 # =====================
-
 def fetch_rmb():
-    r = requests.get(API_URL, params={
+    params = {
         "a": "regiondata",
         "region": NS_REGION,
         "q": "messages"
-    }, headers={
-        "User-Agent": NS_CLIENT,
-        "X-Pin": xpin
-    })
+    }
 
-    return r.text
+    r = requests.get(API_URL, params=params, headers=base_headers())
 
+    print("RMB STATUS:", r.status_code)
 
-def parse(xml):
-    root = ET.fromstring(xml)
-    return [(m.get("id"), m.text or "") for m in root.findall(".//MESSAGE")]
+    return r.text, r.headers.get("X-Pin")
 
+# =====================
+# PARSE
+# =====================
+def parse_messages(xml_data):
+    root = ET.fromstring(xml_data)
+    msgs = []
 
-def ask(prompt):
+    for m in root.findall(".//MESSAGE"):
+        msgs.append((m.get("id"), m.text or ""))
+
+    return msgs
+
+# =====================
+# OPENAI
+# =====================
+def ask_ai(prompt):
     res = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}]
+        messages=[
+            {"role": "system", "content": "You are an RMB assistant in a NationStates region."},
+            {"role": "user", "content": prompt}
+        ]
     )
     return res.choices[0].message.content
 
-
-def post(msg):
-    requests.post(API_URL, data={
+# =====================
+# POST RMB
+# =====================
+def post_rmb(msg):
+    data = {
         "a": "rmbpost",
         "region": NS_REGION,
         "nation": NS_NATION,
         "c": msg
-    }, headers={
-        "User-Agent": NS_CLIENT,
-        "X-Pin": xpin
-    })
+    }
 
+    r = requests.post(API_URL, data=data, headers=base_headers())
+
+    print("POST STATUS:", r.status_code)
 
 # =====================
 # MAIN LOOP
 # =====================
-
 def main():
-    global xpin
-
-    print("LOGIN START")
-    get_xpin()
-
     while True:
         try:
-            xml = fetch_rmb()
-            msgs = parse(xml)
+            xml, xpin = fetch_rmb()
 
-            for mid, text in msgs:
-                if mid in seen_ids:
+            msgs = parse_messages(xml)
+
+            for msg_id, text in msgs:
+
+                if msg_id in seen:
                     continue
-                seen_ids.add(mid)
+                seen.add(msg_id)
 
                 if TRIGGER in text:
                     prompt = text.split(TRIGGER, 1)[1].strip()
-                    reply = ask(prompt)
+
+                    if not prompt:
+                        continue
+
+                    print("PROMPT:", prompt)
+
+                    reply = ask_ai(prompt)
 
                     time.sleep(REPLY_DELAY)
-                    post(reply)
+                    post_rmb(reply)
 
             time.sleep(POLL_INTERVAL)
 
         except Exception as e:
             print("ERROR:", e)
-            time.sleep(10)
-
+            time.sleep(15)
 
 if __name__ == "__main__":
     main()
