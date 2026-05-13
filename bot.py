@@ -15,7 +15,7 @@ NS_CLIENT = os.getenv("NS_CLIENT", "ChatBot (contact: discord)")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
+BASE_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 TRIGGER = "#chatgpt"
 seen = set()
@@ -25,29 +25,27 @@ print("Nation:", NS_NATION)
 print("Region:", NS_REGION)
 
 # =====================
-# RAW FETCH (NO AUTO ENCODING)
+# FETCH RMB (CORRECT NS DOCS METHOD)
 # =====================
 
 def fetch_rmb():
     try:
-        region = NS_REGION.replace(" ", "%20")
-
-        url = (
-            f"{API_URL}"
-            f"?a=messages"
-            f"&region={region}"
-        )
+        params = {
+            "region": NS_REGION,
+            "q": "messages",
+            "limit": 10
+        }
 
         headers = {
             "User-Agent": NS_CLIENT,
             "Accept": "text/xml"
         }
 
-        r = requests.get(url, headers=headers, timeout=20)
+        r = requests.get(BASE_URL, params=params, headers=headers, timeout=20)
 
-        print("REQUEST:", url)
+        print("REQUEST:", r.url)
         print("STATUS:", r.status_code)
-        print("RESPONSE SAMPLE:", r.text[:200])
+        print("BODY SAMPLE:", r.text[:200])
 
         return r.text
 
@@ -57,12 +55,12 @@ def fetch_rmb():
 
 
 # =====================
-# XML PARSER SAFE
+# PARSE XML
 # =====================
 
 def parse_messages(xml_data):
     try:
-        if "<MESSAGE" not in xml_data:
+        if not xml_data or "<MESSAGE" not in xml_data:
             return []
 
         start = xml_data.find("<")
@@ -71,14 +69,14 @@ def parse_messages(xml_data):
 
         root = ET.fromstring(xml_data)
 
-        msgs = []
+        messages = []
 
         for msg in root.findall(".//MESSAGE"):
-            mid = msg.get("id")
+            msg_id = msg.get("id")
             text = "".join(msg.itertext()).strip()
-            msgs.append((mid, text))
+            messages.append((msg_id, text))
 
-        return msgs
+        return messages
 
     except Exception as e:
         print("XML ERROR:", e)
@@ -86,7 +84,7 @@ def parse_messages(xml_data):
 
 
 # =====================
-# AI
+# AI RESPONSE
 # =====================
 
 def ask_ai(prompt):
@@ -94,31 +92,39 @@ def ask_ai(prompt):
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Reply short like a chat bot."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": "You are an RMB assistant inside a NationStates region. Keep replies short, natural, chat-style."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
             ]
         )
         return res.choices[0].message.content
 
     except Exception as e:
-        print("AI ERROR:", e)
-        return "error"
+        print("OPENAI ERROR:", e)
+        return "AI error."
 
 
 # =====================
-# POST
+# POST TO RMB
 # =====================
 
 def post_rmb(msg):
     try:
+        data = {
+            "a": "rmbpost",
+            "region": NS_REGION,
+            "nation": NS_NATION,
+            "c": msg[:500]
+        }
+
         r = requests.post(
-            API_URL,
-            data={
-                "a": "rmbpost",
-                "region": NS_REGION,
-                "nation": NS_NATION,
-                "c": msg[:500]
-            },
+            BASE_URL,
+            data=data,
             headers={"User-Agent": NS_CLIENT},
             timeout=20
         )
@@ -130,7 +136,7 @@ def post_rmb(msg):
 
 
 # =====================
-# LOOP
+# MAIN LOOP
 # =====================
 
 def main():
@@ -138,18 +144,20 @@ def main():
         xml = fetch_rmb()
         messages = parse_messages(xml)
 
-        for mid, text in messages:
-            if not mid or mid in seen:
+        for msg_id, text in messages:
+            if not msg_id or msg_id in seen:
                 continue
 
-            seen.add(mid)
+            seen.add(msg_id)
 
             if TRIGGER in text.lower():
                 prompt = text.split(TRIGGER, 1)[-1].strip()
 
                 if prompt:
                     print("TRIGGER:", prompt)
+
                     reply = ask_ai(prompt)
+
                     time.sleep(3)
                     post_rmb(reply)
 
@@ -158,5 +166,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
