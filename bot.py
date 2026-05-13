@@ -26,23 +26,20 @@ print("Nation:", NS_NATION)
 print("Region:", NS_REGION)
 
 # =====================
-# FETCH RMB (FIXED 100%)
+# FETCH RMB (CORRECT NS ENDPOINT)
 # =====================
 
 def fetch_rmb():
     try:
-        # IMPORTANT: force correct encoding
-        region_encoded = urllib.parse.quote(NS_REGION, safe="")
-
-        url = (
-            f"{API_URL}?a=regiondata"
-            f"&region={region_encoded}"
-            f"&q=messages"
-        )
-
         r = requests.get(
-            url,
-            headers={"User-Agent": NS_CLIENT},
+            API_URL,
+            params={
+                "a": "messages",
+                "region": NS_REGION
+            },
+            headers={
+                "User-Agent": NS_CLIENT
+            },
             timeout=20
         )
 
@@ -57,7 +54,7 @@ def fetch_rmb():
 
 
 # =====================
-# PARSE XML SAFELY
+# XML SAFE PARSER
 # =====================
 
 def parse_messages(xml_data):
@@ -72,14 +69,14 @@ def parse_messages(xml_data):
 
         root = ET.fromstring(xml_data)
 
-        messages = []
+        msgs = []
 
         for msg in root.findall(".//MESSAGE"):
             msg_id = msg.get("id")
             text = "".join(msg.itertext()).strip()
-            messages.append((msg_id, text))
+            msgs.append((msg_id, text))
 
-        return messages
+        return msgs
 
     except Exception as e:
         print("XML ERROR:", e)
@@ -87,7 +84,7 @@ def parse_messages(xml_data):
 
 
 # =====================
-# OPENAI RESPONSE
+# OPENAI
 # =====================
 
 def ask_ai(prompt):
@@ -97,7 +94,7 @@ def ask_ai(prompt):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an RMB assistant in a NationStates region. Keep replies short and natural."
+                    "content": "You are an RMB assistant in NationStates. Keep replies short."
                 },
                 {
                     "role": "user",
@@ -110,7 +107,7 @@ def ask_ai(prompt):
 
     except Exception as e:
         print("OPENAI ERROR:", e)
-        return "AI error."
+        return "AI error"
 
 
 # =====================
@@ -127,7 +124,9 @@ def post_rmb(msg):
                 "nation": NS_NATION,
                 "c": msg[:500]
             },
-            headers={"User-Agent": NS_CLIENT},
+            headers={
+                "User-Agent": NS_CLIENT
+            },
             timeout=20
         )
 
