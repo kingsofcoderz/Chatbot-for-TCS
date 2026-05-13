@@ -5,44 +5,50 @@ import xml.etree.ElementTree as ET
 from openai import OpenAI
 
 # =====================
-# CONFIG
+# ENV
 # =====================
 
 NS_NATION = os.getenv("NS_NATION")
-NS_REGION = os.getenv("NS_REGION")
-NS_CLIENT = os.getenv("NS_CLIENT", "Chatbot (contact: dev)")
-
+NS_REGION = os.getenv("NS_REGION")  # MUST be exact slug or correct name
+NS_CLIENT = os.getenv("NS_CLIENT", "ChatBot (contact: dev)")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 TRIGGER = "#chatgpt"
-
-seen_messages = set()
+seen = set()
 
 # =====================
 # FETCH RMB
 # =====================
+
 def fetch_rmb():
-    r = requests.get(
-        API_URL,
-        params={
-            "a": "messages",
-            "region": NS_REGION
-        },
-        headers={"User-Agent": NS_CLIENT},
-        timeout=20
-    )
+    try:
+        r = requests.get(
+            API_URL,
+            params={
+                "a": "regiondata",
+                "region": NS_REGION,
+                "q": "messages"
+            },
+            headers={
+                "User-Agent": NS_CLIENT
+            },
+            timeout=20
+        )
 
-    print("STATUS:", r.status_code)
-    print("RAW:", r.text[:300])
+        print("STATUS:", r.status_code)
+        return r.text
 
-    return r.text
+    except Exception as e:
+        print("FETCH ERROR:", e)
+        return ""
 
 
 # =====================
-# SAFE XML PARSER (FIXED)
+# CLEAN XML PARSER
 # =====================
 
 def parse_messages(xml_data):
@@ -52,38 +58,37 @@ def parse_messages(xml_data):
 
         start = xml_data.find("<")
         xml_data = xml_data[start:]
-
         end = xml_data.rfind(">") + 1
         xml_data = xml_data[:end]
 
         root = ET.fromstring(xml_data)
 
-        messages = []
+        msgs = []
 
-        for msg in root.findall(".//MESSAGE"):
-            msg_id = msg.get("id")
-            text = "".join(msg.itertext()).strip()
-            messages.append((msg_id, text))
+        for m in root.findall(".//MESSAGE"):
+            mid = m.get("id")
+            text = "".join(m.itertext()).strip()
+            msgs.append((mid, text))
 
-        return messages
+        return msgs
 
     except Exception as e:
-        print("XML PARSE ERROR:", e)
+        print("PARSE ERROR:", e)
         return []
 
 
 # =====================
-# OPENAI RESPONSE
+# OPENAI
 # =====================
 
-def ask_openai(prompt):
+def ask_ai(prompt):
     try:
         res = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful RMB assistant in a NationStates region. Keep replies short."
+                    "content": "You are an RMB assistant for NationStates. Keep replies short."
                 },
                 {
                     "role": "user",
@@ -91,18 +96,19 @@ def ask_openai(prompt):
                 }
             ]
         )
+
         return res.choices[0].message.content
 
     except Exception as e:
         print("OPENAI ERROR:", e)
-        return "Sorry, I failed to respond."
+        return "AI error."
 
 
 # =====================
 # POST RMB
 # =====================
 
-def post_rmb(message):
+def post_rmb(msg):
     try:
         r = requests.post(
             API_URL,
@@ -110,7 +116,7 @@ def post_rmb(message):
                 "a": "rmbpost",
                 "region": NS_REGION,
                 "nation": NS_NATION,
-                "c": message[:500]
+                "c": msg[:500]
             },
             headers={
                 "User-Agent": NS_CLIENT
@@ -118,7 +124,7 @@ def post_rmb(message):
             timeout=20
         )
 
-        print("POST STATUS:", r.status_code)
+        print("POST:", r.status_code)
 
     except Exception as e:
         print("POST ERROR:", e)
@@ -129,40 +135,33 @@ def post_rmb(message):
 # =====================
 
 def main():
-    print("Bot started...")
+    print("Bot starting...")
     print("Nation:", NS_NATION)
     print("Region:", NS_REGION)
 
     while True:
-        try:
-            xml = fetch_rmb()
-            messages = parse_messages(xml)
+        xml = fetch_rmb()
+        messages = parse_messages(xml)
 
-            for msg_id, text in messages:
+        for mid, text in messages:
 
-                if not msg_id or msg_id in seen_messages:
-                    continue
+            if not mid or mid in seen:
+                continue
 
-                seen_messages.add(msg_id)
+            seen.add(mid)
 
-                clean = " ".join(text.split()).lower()
+            if TRIGGER in text.lower():
+                prompt = text.split(TRIGGER, 1)[-1].strip()
 
-                if TRIGGER in clean:
-                    prompt = text.split(TRIGGER, 1)[-1].strip()
+                if prompt:
+                    print("TRIGGER:", prompt)
 
-                    if prompt:
-                        print("TRIGGER FOUND:", prompt)
+                    reply = ask_ai(prompt)
 
-                        reply = ask_openai(prompt)
+                    time.sleep(5)
+                    post_rmb(reply)
 
-                        time.sleep(5)
-                        post_rmb(reply)
-
-            time.sleep(60)
-
-        except Exception as e:
-            print("LOOP ERROR:", e)
-            time.sleep(10)
+        time.sleep(60)
 
 
 if __name__ == "__main__":
