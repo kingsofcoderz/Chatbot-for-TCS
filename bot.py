@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import xml.etree.ElementTree as ET
+import urllib.parse
 from openai import OpenAI
 
 # =====================
@@ -9,8 +10,8 @@ from openai import OpenAI
 # =====================
 
 NS_NATION = os.getenv("NS_NATION")
-NS_REGION = os.getenv("NS_REGION")  # MUST be exact slug or correct name
-NS_CLIENT = os.getenv("NS_CLIENT", "ChatBot (contact: dev)")
+NS_REGION = os.getenv("NS_REGION")
+NS_CLIENT = os.getenv("NS_CLIENT", "RMB Bot (contact dev)")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -21,16 +22,29 @@ TRIGGER = "#chatgpt"
 seen = set()
 
 # =====================
-# FETCH RMB
+# DEBUG
+# =====================
+
+print("STARTING BOT...")
+print("Nation:", NS_NATION)
+print("Region (raw):", NS_REGION)
+
+# =====================
+# FETCH RMB (FIXED)
 # =====================
 
 def fetch_rmb():
     try:
+        # IMPORTANT: encode region properly
+        region_encoded = urllib.parse.quote(NS_REGION)
+
+        url = API_URL
+
         r = requests.get(
-            API_URL,
+            url,
             params={
                 "a": "regiondata",
-                "region": NS_REGION,
+                "region": region_encoded,
                 "q": "messages"
             },
             headers={
@@ -39,7 +53,9 @@ def fetch_rmb():
             timeout=20
         )
 
+        print("REQUEST URL:", r.url)
         print("STATUS:", r.status_code)
+
         return r.text
 
     except Exception as e:
@@ -48,7 +64,7 @@ def fetch_rmb():
 
 
 # =====================
-# CLEAN XML PARSER
+# PARSE XML SAFELY
 # =====================
 
 def parse_messages(xml_data):
@@ -63,22 +79,22 @@ def parse_messages(xml_data):
 
         root = ET.fromstring(xml_data)
 
-        msgs = []
+        messages = []
 
-        for m in root.findall(".//MESSAGE"):
-            mid = m.get("id")
-            text = "".join(m.itertext()).strip()
-            msgs.append((mid, text))
+        for msg in root.findall(".//MESSAGE"):
+            msg_id = msg.get("id")
+            text = "".join(msg.itertext()).strip()
+            messages.append((msg_id, text))
 
-        return msgs
+        return messages
 
     except Exception as e:
-        print("PARSE ERROR:", e)
+        print("XML PARSE ERROR:", e)
         return []
 
 
 # =====================
-# OPENAI
+# OPENAI RESPONSE
 # =====================
 
 def ask_ai(prompt):
@@ -88,7 +104,7 @@ def ask_ai(prompt):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an RMB assistant for NationStates. Keep replies short."
+                    "content": "You are an assistant inside a NationStates region RMB. Reply short."
                 },
                 {
                     "role": "user",
@@ -105,7 +121,7 @@ def ask_ai(prompt):
 
 
 # =====================
-# POST RMB
+# POST MESSAGE
 # =====================
 
 def post_rmb(msg):
@@ -124,7 +140,7 @@ def post_rmb(msg):
             timeout=20
         )
 
-        print("POST:", r.status_code)
+        print("POST STATUS:", r.status_code)
 
     except Exception as e:
         print("POST ERROR:", e)
@@ -135,16 +151,12 @@ def post_rmb(msg):
 # =====================
 
 def main():
-    print("Bot starting...")
-    print("Nation:", NS_NATION)
-    print("Region:", NS_REGION)
-
     while True:
         xml = fetch_rmb()
+
         messages = parse_messages(xml)
 
         for mid, text in messages:
-
             if not mid or mid in seen:
                 continue
 
