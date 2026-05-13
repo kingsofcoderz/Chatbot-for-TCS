@@ -5,43 +5,90 @@ import xml.etree.ElementTree as ET
 import json
 from openai import OpenAI
 
-print("STARTING BOT...")
-print("ENV LOADED")
-
-API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
-
 # =====================
 # ENV
 # =====================
+
 NS_NATION = os.getenv("NS_NATION")
 NS_PASSWORD = os.getenv("NS_PASSWORD")
 NS_REGION = os.getenv("NS_REGION")
-NS_CLIENT = os.getenv("NS_CLIENT")
+NS_CLIENT = os.getenv("NS_CLIENT", "Chatbot-Bot (contact: dev)")
+
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
+
 # =====================
 # CONFIG
 # =====================
+
 POLL_INTERVAL = 120
 REPLY_DELAY = 10
 TRIGGER = "#chatgpt"
 
-seen = set()
+seen_ids = set()
+xpin = None
+
+MEMORY_FILE = "memory.json"
+
 
 # =====================
-# HEADERS BASE
+# MEMORY
 # =====================
-def base_headers():
-    return {
-        "User-Agent": NS_CLIENT,
-        "X-Password": NS_PASSWORD
+
+def load_memory():
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_memory(mem):
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(mem, f)
+
+
+# =====================
+# LOGIN
+# =====================
+
+def get_xpin():
+    global xpin
+
+    url = API_URL
+
+    headers = {
+        "User-Agent": NS_CLIENT
     }
+
+    data = {
+        "a": "login",
+        "nation": NS_NATION,
+        "password": NS_PASSWORD
+    }
+
+    r = requests.post(url, data=data, headers=headers)
+
+    print("LOGIN STATUS:", r.status_code)
+    print("LOGIN RESPONSE:", r.text[:200])
+
+    if r.status_code != 200:
+        raise Exception("Login failed HTTP error")
+
+    xpin = r.headers.get("X-Pin")
+
+    if not xpin:
+        raise Exception("No X-Pin returned (login failed)")
+
+    print("LOGIN SUCCESS")
+
 
 # =====================
 # FETCH RMB
 # =====================
+
 def fetch_rmb():
     params = {
         "a": "regiondata",
@@ -49,86 +96,125 @@ def fetch_rmb():
         "q": "messages"
     }
 
-    r = requests.get(API_URL, params=params, headers=base_headers())
+    headers = {
+        "User-Agent": NS_CLIENT,
+        "X-Pin": xpin
+    }
 
-    print("RMB STATUS:", r.status_code)
+    r = requests.get(API_URL, params=params, headers=headers)
 
-    return r.text, r.headers.get("X-Pin")
+    return r.text
+
 
 # =====================
-# PARSE
+# PARSE RMB (FIXED)
 # =====================
+
 def parse_messages(xml_data):
     root = ET.fromstring(xml_data)
-    msgs = []
+    messages = []
 
-    for m in root.findall(".//MESSAGE"):
-        msgs.append((m.get("id"), m.text or ""))
+    for msg in root.findall(".//MESSAGE"):
+        msg_id = msg.get("id")
 
-    return msgs
+        # FIX: proper extraction
+        text = "".join(msg.itertext()).strip()
+
+        messages.append((msg_id, text))
+
+    return messages
+
 
 # =====================
 # OPENAI
 # =====================
-def ask_ai(prompt):
+
+def ask_openai(prompt, memory_context):
     res = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are an RMB assistant in a NationStates region."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": "You are an RMB assistant inside NationStates. Keep replies short and natural."
+            },
+            {
+                "role": "user",
+                "content": f"Memory: {memory_context}\n\nUser: {prompt}"
+            }
         ]
     )
     return res.choices[0].message.content
 
+
 # =====================
 # POST RMB
 # =====================
-def post_rmb(msg):
+
+def post_rmb(message):
     data = {
         "a": "rmbpost",
         "region": NS_REGION,
         "nation": NS_NATION,
-        "c": msg
+        "c": message[:500]
     }
 
-    r = requests.post(API_URL, data=data, headers=base_headers())
+    headers = {
+        "User-Agent": NS_CLIENT,
+        "X-Pin": xpin
+    }
+
+    r = requests.post(API_URL, data=data, headers=headers)
 
     print("POST STATUS:", r.status_code)
+
 
 # =====================
 # MAIN LOOP
 # =====================
+
 def main():
+    global xpin
+
+    print("Bot starting...")
+
+    memory = load_memory()
+    get_xpin()
+
     while True:
         try:
-            xml, xpin = fetch_rmb()
+            xml = fetch_rmb()
+            messages = parse_messages(xml)
 
-            msgs = parse_messages(xml)
+            for msg_id, text in messages:
 
-            for msg_id, text in msgs:
-
-                if msg_id in seen:
+                if msg_id in seen_ids:
                     continue
-                seen.add(msg_id)
 
-                if TRIGGER in text:
-                    prompt = text.split(TRIGGER, 1)[1].strip()
+                seen_ids.add(msg_id)
 
-                    if not prompt:
-                        continue
+                # normalize text (IMPORTANT FIX)
+                clean_text = " ".join(text.split()).lower()
 
-                    print("PROMPT:", prompt)
+                if TRIGGER in clean_text:
 
-                    reply = ask_ai(prompt)
+                    prompt = text.split(TRIGGER, 1)[-1].strip()
 
-                    time.sleep(REPLY_DELAY)
-                    post_rmb(reply)
+                    if prompt:
+
+                        memory[msg_id] = {"last": prompt}
+                        save_memory(memory)
+
+                        reply = ask_openai(prompt, str(memory.get(msg_id)))
+
+                        time.sleep(REPLY_DELAY)
+                        post_rmb(reply)
 
             time.sleep(POLL_INTERVAL)
 
         except Exception as e:
-            print("ERROR:", e)
+            print("Error:", e)
             time.sleep(15)
+
 
 if __name__ == "__main__":
     main()
