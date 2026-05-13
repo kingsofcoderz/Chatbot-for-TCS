@@ -24,27 +24,21 @@ seen_messages = set()
 # =====================
 # FETCH RMB
 # =====================
-
 def fetch_rmb():
-    try:
-        r = requests.get(
-            API_URL,
-            params={
-                "a": "regiondata",
-                "region": NS_REGION,
-                "q": "messages"
-            },
-            headers={
-                "User-Agent": NS_CLIENT
-            },
-            timeout=20
-        )
+    r = requests.get(
+        API_URL,
+        params={
+            "a": "messages",
+            "region": NS_REGION
+        },
+        headers={"User-Agent": NS_CLIENT},
+        timeout=20
+    )
 
-        return r.text
+    print("STATUS:", r.status_code)
+    print("RAW:", r.text[:300])
 
-    except Exception as e:
-        print("FETCH ERROR:", e)
-        return ""
+    return r.text
 
 
 # =====================
