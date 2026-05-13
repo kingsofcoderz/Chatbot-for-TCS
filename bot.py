@@ -10,22 +10,23 @@ from openai import OpenAI
 
 NS_NATION = os.getenv("NS_NATION")
 NS_REGION = os.getenv("NS_REGION")
-NS_CLIENT = os.getenv("NS_CLIENT", "ChatBot (contact: discord)")
+NS_CLIENT = os.getenv("NS_CLIENT", "ChatBot")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-BASE_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
+API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 TRIGGER = "#chatgpt"
-seen = set()
+seen_ids = set()
 
 print("BOT STARTED")
 print("Nation:", NS_NATION)
 print("Region:", NS_REGION)
 
 # =====================
-# FETCH RMB (CORRECT NS DOCS METHOD)
+# FETCH RMB (DOC-CORRECT)
 # =====================
 
 def fetch_rmb():
@@ -33,7 +34,7 @@ def fetch_rmb():
         params = {
             "region": NS_REGION,
             "q": "messages",
-            "limit": 10
+            "limit": 20
         }
 
         headers = {
@@ -41,11 +42,12 @@ def fetch_rmb():
             "Accept": "text/xml"
         }
 
-        r = requests.get(BASE_URL, params=params, headers=headers, timeout=20)
+        r = requests.get(API_URL, params=params, headers=headers, timeout=20)
 
-        print("REQUEST:", r.url)
+        print("\n--- FETCH ---")
+        print("URL:", r.url)
         print("STATUS:", r.status_code)
-        print("BODY SAMPLE:", r.text[:200])
+        print("SAMPLE:", r.text[:200])
 
         return r.text
 
@@ -55,17 +57,13 @@ def fetch_rmb():
 
 
 # =====================
-# PARSE XML
+# PARSE MESSAGES (SAFE XML)
 # =====================
 
 def parse_messages(xml_data):
     try:
         if not xml_data or "<MESSAGE" not in xml_data:
             return []
-
-        start = xml_data.find("<")
-        xml_data = xml_data[start:]
-        xml_data = xml_data[:xml_data.rfind(">")+1]
 
         root = ET.fromstring(xml_data)
 
@@ -79,7 +77,7 @@ def parse_messages(xml_data):
         return messages
 
     except Exception as e:
-        print("XML ERROR:", e)
+        print("PARSE ERROR:", e)
         return []
 
 
@@ -94,7 +92,7 @@ def ask_ai(prompt):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an RMB assistant inside a NationStates region. Keep replies short, natural, chat-style."
+                    "content": "You are an RMB chatbot inside a NationStates region. Keep replies short, natural, conversational."
                 },
                 {
                     "role": "user",
@@ -110,29 +108,34 @@ def ask_ai(prompt):
 
 
 # =====================
-# POST TO RMB
+# POST TO RMB (CORRECT: c=rmbpost)
 # =====================
 
-def post_rmb(msg):
+def post_rmb(message):
     try:
         data = {
-            "a": "rmbpost",
-            "region": NS_REGION,
+            "c": "rmbpost",
             "nation": NS_NATION,
-            "c": msg[:500]
+            "region": NS_REGION,
+            "text": message[:500]
         }
 
-        r = requests.post(
-            BASE_URL,
-            data=data,
-            headers={"User-Agent": NS_CLIENT},
-            timeout=20
-        )
+        headers = {
+            "User-Agent": NS_CLIENT,
+            "Accept": "text/xml"
+        }
 
-        print("POST STATUS:", r.status_code)
+        r = requests.post(API_URL, data=data, headers=headers, timeout=20)
+
+        print("\n--- POST ---")
+        print("STATUS:", r.status_code)
+        print("RESPONSE:", r.text[:200])
+
+        return r.text
 
     except Exception as e:
         print("POST ERROR:", e)
+        return ""
 
 
 # =====================
@@ -144,11 +147,15 @@ def main():
         xml = fetch_rmb()
         messages = parse_messages(xml)
 
+        print("MESSAGES FOUND:", len(messages))
+
         for msg_id, text in messages:
-            if not msg_id or msg_id in seen:
+            if not msg_id or msg_id in seen_ids:
                 continue
 
-            seen.add(msg_id)
+            seen_ids.add(msg_id)
+
+            print("MSG:", text)
 
             if TRIGGER in text.lower():
                 prompt = text.split(TRIGGER, 1)[-1].strip()
