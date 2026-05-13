@@ -5,18 +5,8 @@ import xml.etree.ElementTree as ET
 import json
 from openai import OpenAI
 
-print("NATION:", repr(os.getenv("NS_NATION")))
-print("REGION:", repr(os.getenv("NS_REGION")))
-print("PASSWORD EXISTS:", bool(os.getenv("NS_PASSWORD")))
-print("Bot starting...")
-print("NS_NATION:", NS_NATION)
-print("NS_REGION:", NS_REGION)
-print("OPENAI KEY EXISTS:", bool(OPENAI_API_KEY))
-
-API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
-
 # =====================
-# 🔐 ENV SECRETS
+# 🔐 ENV SECRETS (MUST BE FIRST)
 # =====================
 
 NS_NATION = os.getenv("NS_NATION")
@@ -25,12 +15,31 @@ NS_REGION = os.getenv("NS_REGION")
 NS_CLIENT = os.getenv("NS_CLIENT")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+print("Bot starting...")
+print("NS_NATION:", NS_NATION)
+print("NS_REGION:", NS_REGION)
+print("OPENAI KEY EXISTS:", bool(OPENAI_API_KEY))
+
+# =====================
+# ❗ SAFETY CHECKS
+# =====================
+
+if not NS_NATION:
+    raise Exception("Missing NS_NATION")
+if not NS_PASSWORD:
+    raise Exception("Missing NS_PASSWORD")
+if not NS_REGION:
+    raise Exception("Missing NS_REGION")
+if not OPENAI_API_KEY:
+    raise Exception("Missing OPENAI_API_KEY")
+
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # =====================
 # ⚙️ CONFIG
 # =====================
 
+API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 POLL_INTERVAL = 120
 REPLY_DELAY = 10
 TRIGGER = "#chatgpt"
@@ -58,15 +67,14 @@ def save_memory(mem):
 
 
 # =====================
-# 🔐 LOGIN (GET X-PIN)
+# 🔐 LOGIN → GET X-PIN
 # =====================
+
 def get_xpin():
     global xpin
 
-    url = "https://www.nationstates.net/cgi-bin/api.cgi"
-
     headers = {
-        "User-Agent": f"{NS_CLIENT} - Contact: your_email_or_discord",
+        "User-Agent": NS_CLIENT
     }
 
     data = {
@@ -75,16 +83,16 @@ def get_xpin():
         "password": NS_PASSWORD
     }
 
-    r = requests.post(url, data=data, headers=headers)
+    r = requests.post(API_URL, data=data, headers=headers)
 
-    print("Status:", r.status_code)
-    print("Headers:", dict(r.headers))
-    print("Body:", r.text)
+    print("Login status:", r.status_code)
+    print("Login headers:", dict(r.headers))
 
     xpin = r.headers.get("X-Pin")
 
     if not xpin:
-        raise Exception("Login failed: no X-Pin returned (check credentials or UA)")
+        raise Exception("Failed to get X-Pin")
+
 
 # =====================
 # 📥 FETCH RMB
@@ -123,7 +131,7 @@ def parse_messages(xml_data):
 
 
 # =====================
-# 🧠 OPENAI RESPONSE (WITH MEMORY)
+# 🧠 OPENAI RESPONSE
 # =====================
 
 def ask_openai(prompt, memory_context):
@@ -132,7 +140,7 @@ def ask_openai(prompt, memory_context):
         messages=[
             {
                 "role": "system",
-                "content": "You are an RMB assistant inside a NationStates region. Use memory context naturally."
+                "content": "You are an RMB assistant inside a NationStates region. Keep replies short and useful."
             },
             {
                 "role": "user",
@@ -190,16 +198,10 @@ def main():
 
                     if prompt:
 
-                        # ---- MEMORY ----
-                        memory[msg_id] = {
-                            "last_message": prompt
-                        }
+                        memory[msg_id] = {"last_message": prompt}
                         save_memory(memory)
 
-                        memory_context = str(memory[msg_id])
-
-                        # ---- AI ----
-                        reply = ask_openai(prompt, memory_context)
+                        reply = ask_openai(prompt, str(memory[msg_id]))
 
                         time.sleep(REPLY_DELAY)
                         post_rmb(reply)
@@ -212,8 +214,4 @@ def main():
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print("CRASH ERROR:", e)
-        
+    main()
