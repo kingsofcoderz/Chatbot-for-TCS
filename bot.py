@@ -13,12 +13,12 @@ NS_REGION = os.getenv("NS_REGION")
 NS_CLIENT = os.getenv("NS_CLIENT", "ChatBot")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 API_URL = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 TRIGGER = "#chatgpt"
+
 seen_ids = set()
 
 print("BOT STARTED")
@@ -26,53 +26,43 @@ print("Nation:", NS_NATION)
 print("Region:", NS_REGION)
 
 # =====================
-# FETCH RMB (DOC-CORRECT)
+# FETCH RMB
 # =====================
 
 def fetch_rmb():
-    try:
-        params = {
+    r = requests.get(
+        API_URL,
+        params={
             "region": NS_REGION,
             "q": "messages",
             "limit": 20
-        }
+        },
+        headers={
+            "User-Agent": NS_CLIENT
+        },
+        timeout=20
+    )
 
-        headers = {
-            "User-Agent": NS_CLIENT,
-            "Accept": "text/xml"
-        }
-
-        r = requests.get(API_URL, params=params, headers=headers, timeout=20)
-
-        print("\n--- FETCH ---")
-        print("URL:", r.url)
-        print("STATUS:", r.status_code)
-        print("SAMPLE:", r.text[:200])
-
-        return r.text
-
-    except Exception as e:
-        print("FETCH ERROR:", e)
-        return ""
+    print("\nFETCH STATUS:", r.status_code)
+    return r.text
 
 
 # =====================
-# PARSE MESSAGES (SAFE XML)
+# PARSE (FIXED BASED ON YOUR XML)
 # =====================
 
 def parse_messages(xml_data):
     try:
-        if not xml_data or "<MESSAGE" not in xml_data:
-            return []
-
         root = ET.fromstring(xml_data)
 
         messages = []
 
-        for msg in root.findall(".//MESSAGE"):
-            msg_id = msg.get("id")
-            text = "".join(msg.itertext()).strip()
-            messages.append((msg_id, text))
+        for post in root.findall(".//POST"):
+            msg_id = post.get("id")
+            nation = post.findtext("NATION") or ""
+            text = post.findtext("MESSAGE") or ""
+
+            messages.append((msg_id, nation, text.strip()))
 
         return messages
 
@@ -92,7 +82,7 @@ def ask_ai(prompt):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an RMB chatbot inside a NationStates region. Keep replies short, natural, conversational."
+                    "content": "You are an RMB chatbot. Keep replies short and natural."
                 },
                 {
                     "role": "user",
@@ -108,38 +98,30 @@ def ask_ai(prompt):
 
 
 # =====================
-# POST TO RMB (CORRECT: c=rmbpost)
+# POST TO RMB (CORRECT NS METHOD)
 # =====================
 
 def post_rmb(message):
-    try:
-        data = {
+    r = requests.post(
+        API_URL,
+        data={
             "c": "rmbpost",
             "nation": NS_NATION,
             "region": NS_REGION,
             "message": message[:500]
-        }
+        },
+        headers={
+            "User-Agent": NS_CLIENT
+        },
+        timeout=20
+    )
 
-        headers = {
-            "User-Agent": NS_CLIENT,
-            "Accept": "text/xml"
-        }
-
-        r = requests.post(API_URL, data=data, headers=headers, timeout=20)
-
-        print("\n--- POST ---")
-        print("STATUS:", r.status_code)
-        print("RESPONSE:", r.text[:200])
-
-        return r.text
-
-    except Exception as e:
-        print("POST ERROR:", e)
-        return ""
+    print("\nPOST STATUS:", r.status_code)
+    print("POST RESPONSE:", r.text[:200])
 
 
 # =====================
-# MAIN LOOP
+# MAIN LOOP (FIXED LOGIC)
 # =====================
 
 def main():
@@ -149,19 +131,24 @@ def main():
 
         print("MESSAGES FOUND:", len(messages))
 
-        for msg_id, text in messages:
+        for msg_id, nation, text in messages:
+
             if not msg_id or msg_id in seen_ids:
                 continue
 
             seen_ids.add(msg_id)
 
-            print("MSG:", text)
+            print(f"\n[{nation}] {text}")
+
+            # ❌ IGNORE BOT OWN POSTS (CRITICAL FIX)
+            if nation == NS_NATION:
+                continue
 
             if TRIGGER in text.lower():
                 prompt = text.split(TRIGGER, 1)[-1].strip()
 
                 if prompt:
-                    print("TRIGGER:", prompt)
+                    print("TRIGGER FOUND:", prompt)
 
                     reply = ask_ai(prompt)
 
