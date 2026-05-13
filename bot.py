@@ -43,24 +43,23 @@ def get_xpin():
     url = "https://www.nationstates.net/cgi-bin/api.cgi"
 
     headers = {
-        "User-Agent": NS_CLIENT
+        "User-Agent": NS_CLIENT,
+        "X-Password": NS_PASSWORD   # THIS IS THE KEY FIX
     }
 
-    data = {
-        "nation": NS_NATION,
-        "password": NS_PASSWORD,
+    params = {
         "a": "ping"
     }
 
-    r = requests.post(url, data=data, headers=headers)
+    r = requests.get(url, params=params, headers=headers)
 
     print("STATUS:", r.status_code)
-    print("HEADERS:", r.headers)
+    print("HEADERS:", dict(r.headers))
 
     xpin = r.headers.get("X-Pin")
 
     if not xpin:
-        raise Exception("No X-Pin returned")
+        raise Exception("Still no X-Pin (auth failed)")
 # =====================
 # RMB FETCH
 # =====================
