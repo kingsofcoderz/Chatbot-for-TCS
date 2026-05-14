@@ -12,7 +12,6 @@ REGION = "chatbot_of_the_citrus_sea"
 
 PASSWORD = os.getenv("PASSWORD", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": "ChatBotTCS NationStates Bot by Shabarish"
@@ -37,35 +36,55 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# WEB SEARCH
+# WIKIPEDIA SEARCH
+# =========================
+
+def wiki_search(query):
+    try:
+        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
+        r = requests.get(url, timeout=10)
+
+        if r.status_code != 200:
+            return ""
+
+        data = r.json()
+        return data.get("extract", "")
+
+    except:
+        return ""
+
+# =========================
+# DUCKDUCKGO SEARCH
+# =========================
+
+def ddg_search(query):
+    try:
+        url = "https://duckduckgo.com/html/"
+        headers = {"User-Agent": "Mozilla/5.0"}
+
+        r = requests.post(url, data={"q": query}, headers=headers, timeout=10)
+
+        return r.text[:2000]
+
+    except:
+        return ""
+
+# =========================
+# MASTER SEARCH
 # =========================
 
 def web_search(query):
-    if not SERPAPI_KEY:
-        return "Search unavailable (missing API key)."
 
-    url = "https://serpapi.com/search.json"
+    wiki = wiki_search(query)
+    ddg = ddg_search(query)
 
-    params = {
-        "q": query,
-        "api_key": SERPAPI_KEY
-    }
+    return f"""
+[WIKIPEDIA]
+{wiki}
 
-    try:
-        r = requests.get(url, params=params, timeout=20)
-        data = r.json()
-
-        results = []
-
-        for item in data.get("organic_results", [])[:5]:
-            title = item.get("title", "")
-            snippet = item.get("snippet", "")
-            results.append(f"{title} - {snippet}")
-
-        return "\n".join(results)
-
-    except Exception as e:
-        return f"Search failed: {e}"
+[DUCKDUCKGO RAW]
+{ddg}
+"""
 
 # =========================
 # GEMINI (CHATBOT)
@@ -85,7 +104,7 @@ def ask_gemini(prompt):
                     {
                         "text": (
                             "You are ChatBotTCS for NationStates RMB. "
-                            "Be short, friendly, use BBCode only [b][i][u][nation][region]. "
+                            "Be short, friendly, use BBCode only. "
                             "No markdown.\n\n"
                             f"User: {prompt}"
                         )
@@ -99,9 +118,9 @@ def ask_gemini(prompt):
 
     data = r.json()
 
-    reply = data["candidates"][0]["content"]["parts"][0]["text"]
-
-    return clean_bbcode(reply)
+    return clean_bbcode(
+        data["candidates"][0]["content"]["parts"][0]["text"]
+    )
 
 # =========================
 # GEMINI + SEARCH
@@ -122,9 +141,10 @@ def ask_gemini_search(prompt):
                 "parts": [
                     {
                         "text": (
-                            "You are ChatBotTCS. Use web results to answer accurately.\n\n"
-                            f"WEB RESULTS:\n{search_results}\n\n"
-                            f"QUESTION: {prompt}\n"
+                            "You are ChatBotTCS. Use search results to answer.\n"
+                            "Prefer Wikipedia if useful. Ignore messy HTML.\n\n"
+                            f"SEARCH DATA:\n{search_results}\n\n"
+                            f"QUESTION: {prompt}"
                         )
                     }
                 ]
@@ -136,9 +156,9 @@ def ask_gemini_search(prompt):
 
     data = r.json()
 
-    reply = data["candidates"][0]["content"]["parts"][0]["text"]
-
-    return clean_bbcode(reply)
+    return clean_bbcode(
+        data["candidates"][0]["content"]["parts"][0]["text"]
+    )
 
 # =========================
 # RMB POST
@@ -232,35 +252,32 @@ def main():
                     continue
 
                 msg_lower = message.lower()
-
                 response = None
 
                 # =========================
-                # CHATSEARCH MODE
+                # CHATSEARCH
                 # =========================
                 if "#chatsearch" in msg_lower:
 
                     cleaned = message.replace("#chatsearch", "").strip()
-
                     if not cleaned:
                         cleaned = "Hello"
 
                     response = ask_gemini_search(cleaned)
 
                 # =========================
-                # CHATBOT MODE
+                # CHATBOT
                 # =========================
                 elif "#chatbot" in msg_lower:
 
                     cleaned = message.replace("#chatbot", "").strip()
-
                     if not cleaned:
                         cleaned = "Hello"
 
                     response = ask_gemini(cleaned)
 
                 # =========================
-                # POST RESPONSE
+                # POST
                 # =========================
                 if response:
 
