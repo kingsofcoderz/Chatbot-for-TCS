@@ -2,7 +2,7 @@ import requests
 
 NATION = "chatbottcs"
 REGION = "chatbot_of_the_citrus_sea"
-PASSWORD = "YOUR_PASSWORD"
+PASSWORD = "welcome123"
 
 HEADERS = {
     "User-Agent": "ChatBotTCS/1.0"
