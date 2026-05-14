@@ -2,7 +2,6 @@ import requests
 import xml.etree.ElementTree as ET
 import time
 import os
-import sqlite3
 
 # =========================
 # CONFIG
@@ -12,7 +11,6 @@ NATION = "chatbottcs"
 REGION = "chatbot_of_the_citrus_sea"
 
 PASSWORD = os.getenv("PASSWORD", "").strip()
-
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 TRIGGER = "#chatbot"
@@ -24,58 +22,19 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
-# DATABASE
-# =========================
-
-conn = sqlite3.connect(
-    "bot.db",
-    check_same_thread=False
-)
-
-cursor = conn.cursor()
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS seen_posts (
-    post_id TEXT PRIMARY KEY
-)
-""")
-
-conn.commit()
-
-def has_seen_post(post_id):
-
-    cursor.execute(
-        "SELECT post_id FROM seen_posts WHERE post_id=?",
-        (post_id,)
-    )
-
-    return cursor.fetchone() is not None
-
-def save_seen_post(post_id):
-
-    try:
-
-        cursor.execute(
-            "INSERT INTO seen_posts (post_id) VALUES (?)",
-            (post_id,)
-        )
-
-        conn.commit()
-
-    except:
-        pass
-
-# =========================
 # BBCODE CLEANER
 # =========================
 
 def clean_bbcode(text):
 
+    # Remove markdown formatting
     text = text.replace("**", "")
     text = text.replace("__", "")
 
+    # Replace newlines
     text = text.replace("\n", " ")
 
+    # Block dangerous tags
     blocked_tags = [
         "[img]",
         "[/img]",
@@ -88,7 +47,7 @@ def clean_bbcode(text):
     for tag in blocked_tags:
         text = text.replace(tag, "")
 
-    return text
+    return text.strip()
 
 # =========================
 # GEMINI AI
@@ -110,13 +69,14 @@ def ask_gemini(prompt):
                 "parts": [
                     {
                         "text": (
-                            "You are a helpful AI bot on the "
-                            "NationStates regional message board. "
+                            "You are ChatBotTCS, a helpful AI bot on the "
+                            "NationStates regional message board for "
+                            "The Citrus Sea. "
                             "Use NationStates BBCode when useful. "
                             "Allowed tags are: "
                             "[b], [i], [u], [nation], [region]. "
                             "Do NOT use markdown. "
-                            "Keep replies brief and natural.\n\n"
+                            "Keep replies short, natural, and friendly.\n\n"
                             f"User message: {prompt}"
                         )
                     }
@@ -142,9 +102,7 @@ def ask_gemini(prompt):
             ["content"]["parts"][0]["text"]
         )
 
-        reply = clean_bbcode(reply)
-
-        return reply
+        return clean_bbcode(reply)
 
     except Exception as e:
 
@@ -157,6 +115,8 @@ def ask_gemini(prompt):
 # =========================
 
 def post_rmb(text):
+
+    # ---------- PREPARE ----------
 
     prepare_data = {
         "c": "rmbpost",
@@ -189,6 +149,8 @@ def post_rmb(text):
     if not xpin:
         print("NO XPIN")
         return
+
+    # ---------- EXECUTE ----------
 
     execute_data = {
         "c": "rmbpost",
@@ -236,6 +198,8 @@ def main():
 
     print("Bot started...")
 
+    seen_posts = set()
+
     while True:
 
         try:
@@ -258,12 +222,12 @@ def main():
 
                 print(nation, ":", message)
 
-                # Ignore own bot
+                # Ignore own bot posts
                 if nation.lower() == NATION.lower():
                     continue
 
-                # Prevent duplicates
-                if has_seen_post(post_id):
+                # Prevent duplicates during runtime
+                if post_id in seen_posts:
                     continue
 
                 # Trigger detection
@@ -282,21 +246,23 @@ def main():
 
                     response = ask_gemini(cleaned)
 
+                    # RMB safety limit
                     response = response[:500]
 
                     print("AI RESPONSE:", response)
 
                     post_rmb(response)
 
-                    save_seen_post(post_id)
+                    seen_posts.add(post_id)
 
-                    # Flood control
+                    # Avoid RMB flood control
                     time.sleep(15)
 
         except Exception as e:
 
             print("ERROR:", e)
 
+        # Poll every 10 seconds
         time.sleep(10)
 
 # =========================
