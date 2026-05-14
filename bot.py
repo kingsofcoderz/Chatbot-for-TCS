@@ -12,8 +12,7 @@ REGION = "chatbot_of_the_citrus_sea"
 
 PASSWORD = os.getenv("PASSWORD", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-
-TRIGGER = "#chatbot"
+SERPAPI_KEY = os.getenv("SERPAPI_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": "ChatBotTCS NationStates Bot by Shabarish"
@@ -22,27 +21,15 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
-# BBCODE CLEANER
+# CLEANER
 # =========================
 
 def clean_bbcode(text):
-
-    # Remove markdown formatting
     text = text.replace("**", "")
     text = text.replace("__", "")
-
-    # Replace newlines
     text = text.replace("\n", " ")
 
-    # Block dangerous tags
-    blocked_tags = [
-        "[img]",
-        "[/img]",
-        "[url]",
-        "[/url]",
-        "[quote]",
-        "[/quote]"
-    ]
+    blocked_tags = ["[img]", "[/img]", "[url]", "[/url]", "[quote]", "[/quote]"]
 
     for tag in blocked_tags:
         text = text.replace(tag, "")
@@ -50,13 +37,41 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# GEMINI AI
+# WEB SEARCH
+# =========================
+
+def web_search(query):
+    if not SERPAPI_KEY:
+        return "Search unavailable (missing API key)."
+
+    url = "https://serpapi.com/search.json"
+
+    params = {
+        "q": query,
+        "api_key": SERPAPI_KEY
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=20)
+        data = r.json()
+
+        results = []
+
+        for item in data.get("organic_results", [])[:5]:
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+            results.append(f"{title} - {snippet}")
+
+        return "\n".join(results)
+
+    except Exception as e:
+        return f"Search failed: {e}"
+
+# =========================
+# GEMINI (CHATBOT)
 # =========================
 
 def ask_gemini(prompt):
-
-    if not GEMINI_API_KEY:
-        return "Gemini API key missing."
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -69,15 +84,10 @@ def ask_gemini(prompt):
                 "parts": [
                     {
                         "text": (
-                            "You are ChatBotTCS, a helpful AI bot on the "
-                            "NationStates regional message board for "
-                            "The Citrus Sea. "
-                            "Use NationStates BBCode when useful. "
-                            "Allowed tags are: "
-                            "[b], [i], [u], [nation], [region]. "
-                            "Do NOT use markdown. "
-                            "Keep replies short, natural, and friendly.\n\n"
-                            f"User message: {prompt}"
+                            "You are ChatBotTCS for NationStates RMB. "
+                            "Be short, friendly, use BBCode only [b][i][u][nation][region]. "
+                            "No markdown.\n\n"
+                            f"User: {prompt}"
                         )
                     }
                 ]
@@ -85,38 +95,56 @@ def ask_gemini(prompt):
         ]
     }
 
-    try:
+    r = requests.post(url, json=payload, timeout=30)
 
-        r = requests.post(
-            url,
-            json=payload,
-            timeout=30
-        )
+    data = r.json()
 
-        print("GEMINI STATUS:", r.status_code)
+    reply = data["candidates"][0]["content"]["parts"][0]["text"]
 
-        data = r.json()
-
-        reply = (
-            data["candidates"][0]
-            ["content"]["parts"][0]["text"]
-        )
-
-        return clean_bbcode(reply)
-
-    except Exception as e:
-
-        print("GEMINI ERROR:", e)
-
-        return "AI failed to respond."
+    return clean_bbcode(reply)
 
 # =========================
-# RMB POSTING
+# GEMINI + SEARCH
+# =========================
+
+def ask_gemini_search(prompt):
+
+    search_results = web_search(prompt)
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    )
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": (
+                            "You are ChatBotTCS. Use web results to answer accurately.\n\n"
+                            f"WEB RESULTS:\n{search_results}\n\n"
+                            f"QUESTION: {prompt}\n"
+                        )
+                    }
+                ]
+            }
+        ]
+    }
+
+    r = requests.post(url, json=payload, timeout=30)
+
+    data = r.json()
+
+    reply = data["candidates"][0]["content"]["parts"][0]["text"]
+
+    return clean_bbcode(reply)
+
+# =========================
+# RMB POST
 # =========================
 
 def post_rmb(text):
-
-    # ---------- PREPARE ----------
 
     prepare_data = {
         "c": "rmbpost",
@@ -126,31 +154,21 @@ def post_rmb(text):
         "mode": "prepare"
     }
 
-    prepare_headers = HEADERS.copy()
-    prepare_headers["X-Password"] = PASSWORD
+    headers = HEADERS.copy()
+    headers["X-Password"] = PASSWORD
 
-    r = requests.post(
-        NS_API,
-        data=prepare_data,
-        headers=prepare_headers
-    )
-
-    print("PREPARE STATUS:", r.status_code)
+    r = requests.post(NS_API, data=prepare_data, headers=headers)
 
     if "<SUCCESS>" not in r.text:
-        print("PREPARE FAILED")
-        print(r.text)
+        print("Prepare failed")
         return
 
     token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
-
     xpin = r.headers.get("X-Pin")
 
     if not xpin:
-        print("NO XPIN")
+        print("No X-Pin")
         return
-
-    # ---------- EXECUTE ----------
 
     execute_data = {
         "c": "rmbpost",
@@ -164,29 +182,19 @@ def post_rmb(text):
     execute_headers = HEADERS.copy()
     execute_headers["X-Pin"] = xpin
 
-    r2 = requests.post(
-        NS_API,
-        data=execute_data,
-        headers=execute_headers
-    )
+    r2 = requests.post(NS_API, data=execute_data, headers=execute_headers)
 
-    print("EXECUTE STATUS:", r2.status_code)
-    print(r2.text)
+    print("POST:", r2.status_code)
 
 # =========================
-# RMB READER
+# GET MESSAGES
 # =========================
 
 def get_messages():
 
     url = f"{NS_API}?region={REGION}&q=messages"
 
-    r = requests.get(
-        url,
-        headers=HEADERS
-    )
-
-    print("READ STATUS:", r.status_code)
+    r = requests.get(url, headers=HEADERS)
 
     return r.text
 
@@ -198,14 +206,12 @@ def main():
 
     print("Bot started...")
 
-    seen_posts = set()
+    seen = set()
 
     while True:
 
         try:
-
             xml_data = get_messages()
-
             root = ET.fromstring(xml_data)
 
             posts = root.findall(".//POST")
@@ -213,60 +219,68 @@ def main():
             for post in posts:
 
                 post_id = post.attrib.get("id")
-
                 nation = post.find("NATION").text
                 message = post.find("MESSAGE").text
 
                 if not message:
                     continue
 
-                print(nation, ":", message)
-
-                # Ignore own bot posts
                 if nation.lower() == NATION.lower():
                     continue
 
-                # Prevent duplicates during runtime
-                if post_id in seen_posts:
+                if post_id in seen:
                     continue
 
-                # Trigger detection
-                if TRIGGER in message.lower():
+                msg_lower = message.lower()
 
-                    print("TRIGGER FOUND")
+                response = None
 
-                    cleaned = (
-                        message
-                        .replace(TRIGGER, "")
-                        .strip()
-                    )
+                # =========================
+                # CHATSEARCH MODE
+                # =========================
+                if "#chatsearch" in msg_lower:
+
+                    cleaned = message.replace("#chatsearch", "").strip()
+
+                    if not cleaned:
+                        cleaned = "Hello"
+
+                    response = ask_gemini_search(cleaned)
+
+                # =========================
+                # CHATBOT MODE
+                # =========================
+                elif "#chatbot" in msg_lower:
+
+                    cleaned = message.replace("#chatbot", "").strip()
 
                     if not cleaned:
                         cleaned = "Hello"
 
                     response = ask_gemini(cleaned)
 
-                    # RMB safety limit
+                # =========================
+                # POST RESPONSE
+                # =========================
+                if response:
+
                     response = response[:500]
 
-                    print("AI RESPONSE:", response)
+                    print("AI:", response)
 
                     post_rmb(response)
 
-                    seen_posts.add(post_id)
+                    seen.add(post_id)
 
-                    # Avoid RMB flood control
                     time.sleep(15)
 
         except Exception as e:
-
             print("ERROR:", e)
 
-        # Poll every 10 seconds
         time.sleep(10)
 
 # =========================
-# START
+# RUN
 # =========================
 
 if __name__ == "__main__":
