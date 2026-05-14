@@ -23,6 +23,34 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
+# BBCODE CLEANER
+# =========================
+
+def clean_bbcode(text):
+
+    # Remove markdown-style formatting
+    text = text.replace("**", "")
+    text = text.replace("__", "")
+
+    # Replace newlines
+    text = text.replace("\n", " ")
+
+    # Prevent dangerous tags
+    blocked_tags = [
+        "[img]",
+        "[/img]",
+        "[url]",
+        "[/url]",
+        "[quote]",
+        "[/quote]"
+    ]
+
+    for tag in blocked_tags:
+        text = text.replace(tag, "")
+
+    return text
+
+# =========================
 # GEMINI AI
 # =========================
 
@@ -44,8 +72,11 @@ def ask_gemini(prompt):
                         "text": (
                             "You are a helpful AI bot on the "
                             "NationStates regional message board. "
-                            "Reply briefly, naturally, and clearly. "
-                            "Avoid markdown.\n\n"
+                            "Use NationStates BBCode when useful. "
+                            "Allowed tags are: "
+                            "[b], [i], [u], [nation], [region]. "
+                            "Do NOT use markdown. "
+                            "Keep replies brief and natural.\n\n"
                             f"User message: {prompt}"
                         )
                     }
@@ -71,8 +102,7 @@ def ask_gemini(prompt):
             ["content"]["parts"][0]["text"]
         )
 
-        # Clean RMB formatting
-        reply = reply.replace("\n", " ")
+        reply = clean_bbcode(reply)
 
         return reply
 
@@ -194,7 +224,7 @@ def main():
 
                 print(nation, ":", message)
 
-                # Ignore bot's own posts
+                # Ignore own bot posts
                 if nation.lower() == NATION.lower():
                     continue
 
@@ -227,7 +257,7 @@ def main():
 
                     seen_posts.add(post_id)
 
-                    # Avoid RMB flood control
+                    # Avoid flood control
                     time.sleep(15)
 
         except Exception as e:
