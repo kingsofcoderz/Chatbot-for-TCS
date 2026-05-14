@@ -1,18 +1,32 @@
 import requests
+import xml.etree.ElementTree as ET
+import time
+import os
+
+# =========================
+# CONFIG
+# =========================
 
 NATION = "chatbottcs"
 REGION = "chatbot_of_the_citrus_sea"
-PASSWORD = "welcome123"
+
+PASSWORD = os.getenv("PASSWORD", "").strip()
+
+TRIGGER = "#chatbot"
 
 HEADERS = {
-    "User-Agent": "ChatBotTCS/1.0"
+    "User-Agent": "ChatBotTCS NationStates Bot by Shabarish"
 }
+
+NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
+
+# =========================
+# RMB POSTING
+# =========================
 
 def post_rmb(text):
 
-    url = "https://www.nationstates.net/cgi-bin/api.cgi"
-
-    # ---------------- PREPARE ----------------
+    # ---------- PREPARE ----------
 
     prepare_data = {
         "c": "rmbpost",
@@ -26,28 +40,27 @@ def post_rmb(text):
     prepare_headers["X-Password"] = PASSWORD
 
     r = requests.post(
-        url,
+        NS_API,
         data=prepare_data,
         headers=prepare_headers
     )
 
     print("PREPARE STATUS:", r.status_code)
-    print(r.text)
 
     if "<SUCCESS>" not in r.text:
-        print("Prepare failed")
+        print("PREPARE FAILED")
+        print(r.text)
         return
 
-    # Get token
     token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
 
-    # Get X-Pin
     xpin = r.headers.get("X-Pin")
 
-    print("TOKEN:", token)
-    print("XPIN:", xpin)
+    if not xpin:
+        print("NO XPIN")
+        return
 
-    # ---------------- EXECUTE ----------------
+    # ---------- EXECUTE ----------
 
     execute_data = {
         "c": "rmbpost",
@@ -62,7 +75,7 @@ def post_rmb(text):
     execute_headers["X-Pin"] = xpin
 
     r2 = requests.post(
-        url,
+        NS_API,
         data=execute_data,
         headers=execute_headers
     )
@@ -70,4 +83,90 @@ def post_rmb(text):
     print("EXECUTE STATUS:", r2.status_code)
     print(r2.text)
 
-post_rmb("Hello from bot")
+# =========================
+# RMB READER
+# =========================
+
+def get_messages():
+
+    url = f"{NS_API}?region={REGION}&q=messages"
+
+    r = requests.get(
+        url,
+        headers=HEADERS
+    )
+
+    print("READ STATUS:", r.status_code)
+
+    return r.text
+
+# =========================
+# MAIN LOOP
+# =========================
+
+def main():
+
+    print("Bot started...")
+
+    seen_posts = set()
+
+    while True:
+
+        try:
+
+            xml_data = get_messages()
+
+            root = ET.fromstring(xml_data)
+
+            posts = root.findall(".//POST")
+
+            for post in posts:
+
+                post_id = post.attrib.get("id")
+
+                nation = post.find("NATION").text
+                message = post.find("MESSAGE").text
+
+                if not message:
+                    continue
+
+                print(nation, ":", message)
+
+                # Ignore own bot
+                if nation.lower() == NATION.lower():
+                    continue
+
+                # Prevent duplicate replies
+                if post_id in seen_posts:
+                    continue
+
+                # Trigger detection
+                if TRIGGER in message.lower():
+
+                    print("TRIGGER FOUND")
+
+                    response = (
+                        f"Hello @{nation}, "
+                        f"I detected your trigger."
+                    )
+
+                    post_rmb(response)
+
+                    seen_posts.add(post_id)
+
+                    # Avoid flood control
+                    time.sleep(15)
+
+        except Exception as e:
+
+            print("ERROR:", e)
+
+        # Poll every 10 seconds
+        time.sleep(10)
+
+# =========================
+# START
+# =========================
+
+if __name__ == "__main__":
+    main()
