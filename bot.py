@@ -2,6 +2,7 @@ import requests
 import xml.etree.ElementTree as ET
 import time
 import os
+import sqlite3
 
 # =========================
 # CONFIG
@@ -23,19 +24,58 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
+# DATABASE
+# =========================
+
+conn = sqlite3.connect(
+    "bot.db",
+    check_same_thread=False
+)
+
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS seen_posts (
+    post_id TEXT PRIMARY KEY
+)
+""")
+
+conn.commit()
+
+def has_seen_post(post_id):
+
+    cursor.execute(
+        "SELECT post_id FROM seen_posts WHERE post_id=?",
+        (post_id,)
+    )
+
+    return cursor.fetchone() is not None
+
+def save_seen_post(post_id):
+
+    try:
+
+        cursor.execute(
+            "INSERT INTO seen_posts (post_id) VALUES (?)",
+            (post_id,)
+        )
+
+        conn.commit()
+
+    except:
+        pass
+
+# =========================
 # BBCODE CLEANER
 # =========================
 
 def clean_bbcode(text):
 
-    # Remove markdown-style formatting
     text = text.replace("**", "")
     text = text.replace("__", "")
 
-    # Replace newlines
     text = text.replace("\n", " ")
 
-    # Prevent dangerous tags
     blocked_tags = [
         "[img]",
         "[/img]",
@@ -118,8 +158,6 @@ def ask_gemini(prompt):
 
 def post_rmb(text):
 
-    # ---------- PREPARE ----------
-
     prepare_data = {
         "c": "rmbpost",
         "nation": NATION,
@@ -151,8 +189,6 @@ def post_rmb(text):
     if not xpin:
         print("NO XPIN")
         return
-
-    # ---------- EXECUTE ----------
 
     execute_data = {
         "c": "rmbpost",
@@ -200,8 +236,6 @@ def main():
 
     print("Bot started...")
 
-    seen_posts = set()
-
     while True:
 
         try:
@@ -224,12 +258,12 @@ def main():
 
                 print(nation, ":", message)
 
-                # Ignore own bot posts
+                # Ignore own bot
                 if nation.lower() == NATION.lower():
                     continue
 
-                # Prevent duplicate replies
-                if post_id in seen_posts:
+                # Prevent duplicates
+                if has_seen_post(post_id):
                     continue
 
                 # Trigger detection
@@ -248,23 +282,21 @@ def main():
 
                     response = ask_gemini(cleaned)
 
-                    # RMB safety limit
                     response = response[:500]
 
                     print("AI RESPONSE:", response)
 
                     post_rmb(response)
 
-                    seen_posts.add(post_id)
+                    save_seen_post(post_id)
 
-                    # Avoid flood control
+                    # Flood control
                     time.sleep(15)
 
         except Exception as e:
 
             print("ERROR:", e)
 
-        # Poll every 10 seconds
         time.sleep(10)
 
 # =========================
