@@ -12,6 +12,8 @@ REGION = "chatbot_of_the_citrus_sea"
 
 PASSWORD = os.getenv("PASSWORD", "").strip()
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
 TRIGGER = "#chatbot"
 
 HEADERS = {
@@ -19,6 +21,66 @@ HEADERS = {
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
+
+# =========================
+# GEMINI AI
+# =========================
+
+def ask_gemini(prompt):
+
+    if not GEMINI_API_KEY:
+        return "Gemini API key missing."
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    )
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": (
+                            "You are a helpful AI bot on the "
+                            "NationStates regional message board. "
+                            "Reply briefly, naturally, and clearly. "
+                            "Avoid markdown.\n\n"
+                            f"User message: {prompt}"
+                        )
+                    }
+                ]
+            }
+        ]
+    }
+
+    try:
+
+        r = requests.post(
+            url,
+            json=payload,
+            timeout=30
+        )
+
+        print("GEMINI STATUS:", r.status_code)
+
+        data = r.json()
+
+        reply = (
+            data["candidates"][0]
+            ["content"]["parts"][0]["text"]
+        )
+
+        # Clean RMB formatting
+        reply = reply.replace("\n", " ")
+
+        return reply
+
+    except Exception as e:
+
+        print("GEMINI ERROR:", e)
+
+        return "AI failed to respond."
 
 # =========================
 # RMB POSTING
@@ -132,7 +194,7 @@ def main():
 
                 print(nation, ":", message)
 
-                # Ignore own bot
+                # Ignore bot's own posts
                 if nation.lower() == NATION.lower():
                     continue
 
@@ -145,16 +207,27 @@ def main():
 
                     print("TRIGGER FOUND")
 
-                    response = (
-                        f"Hello @{nation}, "
-                        f"I detected your trigger."
+                    cleaned = (
+                        message
+                        .replace(TRIGGER, "")
+                        .strip()
                     )
+
+                    if not cleaned:
+                        cleaned = "Hello"
+
+                    response = ask_gemini(cleaned)
+
+                    # RMB safety limit
+                    response = response[:500]
+
+                    print("AI RESPONSE:", response)
 
                     post_rmb(response)
 
                     seen_posts.add(post_id)
 
-                    # Avoid flood control
+                    # Avoid RMB flood control
                     time.sleep(15)
 
         except Exception as e:
