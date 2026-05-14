@@ -41,14 +41,31 @@ def clean_bbcode(text):
 
 def wiki_search(query):
     try:
-        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
-        r = requests.get(url, timeout=10)
+        url = "https://en.wikipedia.org/api/rest_v1/page/summary/"
+        r = requests.get(url + query.replace(" ", "_"), timeout=10)
 
-        if r.status_code != 200:
+        if r.status_code == 200:
+            data = r.json()
+            return data.get("extract", "")
+
+        # fallback search
+        search_url = "https://en.wikipedia.org/w/api.php"
+        params = {
+            "action": "opensearch",
+            "search": query,
+            "limit": 1,
+            "format": "json"
+        }
+
+        r = requests.get(search_url, params=params, timeout=10)
+        data = r.json()
+
+        if len(data[3]) > 0:
+            page = data[3][0]
+            r2 = requests.get(page.replace("/wiki/", ""), timeout=10)
             return ""
 
-        data = r.json()
-        return data.get("extract", "")
+        return ""
 
     except:
         return ""
@@ -59,16 +76,34 @@ def wiki_search(query):
 
 def ddg_search(query):
     try:
-        url = "https://duckduckgo.com/html/"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        url = "https://api.duckduckgo.com/"
+        params = {
+            "q": query,
+            "format": "json",
+            "no_html": 1,
+            "skip_disambig": 1
+        }
 
-        r = requests.post(url, data={"q": query}, headers=headers, timeout=10)
+        r = requests.get(url, params=params, timeout=10)
+        data = r.json()
 
-        return r.text[:2000]
+        abstract = data.get("AbstractText", "")
+        related = data.get("RelatedTopics", [])
+
+        results = []
+
+        if abstract:
+            results.append(abstract)
+
+        for item in related[:5]:
+            if isinstance(item, dict) and "Text" in item:
+                results.append(item["Text"])
+
+        return "\n".join(results)
 
     except:
         return ""
-
+        
 # =========================
 # MASTER SEARCH
 # =========================
