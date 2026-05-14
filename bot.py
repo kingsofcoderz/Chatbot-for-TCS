@@ -1,66 +1,47 @@
 import requests
-import time
 
 NATION = "chatbottcs"
 REGION = "chatbot_of_the_citrus_sea"
+PASSWORD = "welcome123"
 
-NS_HEADERS = {
-    "User-Agent": "ChatBotTCS Bot"
+HEADERS = {
+    "User-Agent": "ChatBotTCS Testing Bot"
 }
-
-def ask_ai(prompt):
-    try:
-        r = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "gemma:1b",
-                "prompt": f"You are a helpful AI bot. Reply clearly.\nUser: {prompt}",
-                "stream": False
-            },
-            timeout=30
-        )
-        return r.json().get("response", "No response")
-    except:
-        return "🤖 AI is offline, but I saw your message."
-
-def get_messages():
-    url = f"https://www.nationstates.net/cgi-bin/api.cgi?region={REGION}&q=messages"
-    r = requests.get(url, headers=NS_HEADERS)
-    return r.text
 
 def post_rmb(text):
     url = "https://www.nationstates.net/cgi-bin/api.cgi"
+
     data = {
         "c": "rmbpost",
         "nation": NATION,
         "region": REGION,
         "text": text,
-        "mode": "post"
+        "mode": "prepare"
     }
-    requests.post(url, data=data, headers=NS_HEADERS)
 
-def main():
-    print("Bot started...")
+    headers = HEADERS.copy()
+    headers["X-Password"] = PASSWORD
 
-    last_seen = ""
+    # STEP 1: PREPARE
+    r = requests.post(url, data=data, headers=headers)
 
-    while True:
-        try:
-            data = get_messages()
+    print("PREPARE STATUS:", r.status_code)
+    print(r.text)
 
-            if "#chatgpt" in data and data != last_seen:
-                print("Trigger found")
+    if "<SUCCESS>" not in r.text:
+        print("Prepare failed")
+        return
 
-                reply = ask_ai(data)
+    # Extract token
+    token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
 
-                post_rmb(reply)
+    # STEP 2: EXECUTE
+    data["mode"] = "execute"
+    data["token"] = token
 
-                last_seen = data
+    r2 = requests.post(url, data=data, headers=headers)
 
-        except Exception as e:
-            print("Error:", e)
+    print("EXECUTE STATUS:", r2.status_code)
+    print(r2.text)
 
-        time.sleep(10)
-
-if __name__ == "__main__":
-    main()
+post_rmb("Bot online test")
