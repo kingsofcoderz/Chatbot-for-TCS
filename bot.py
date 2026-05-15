@@ -14,20 +14,16 @@ PASSWORD = os.getenv("PASSWORD", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
-    "User-Agent": "ChatBotTCS NationStates Bot"
+    "User-Agent": "ChatBotTCS Debug Bot"
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
-
-# =========================
-# ERROR
-# =========================
 
 class AIModelError(Exception):
     pass
 
 # =========================
-# CLEAN TEXT
+# CLEANER
 # =========================
 
 def clean_bbcode(text):
@@ -40,7 +36,7 @@ def clean_bbcode(text):
     return text.replace("\n", " ").strip()
 
 # =========================
-# GEMINI (SAFE)
+# GEMINI
 # =========================
 
 def call_gemini(prompt):
@@ -50,13 +46,10 @@ def call_gemini(prompt):
         f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
     )
 
-    payload = {
-        "contents": [
-            {"parts": [{"text": prompt}]}
-        ]
-    }
+    r = requests.post(url, json={
+        "contents": [{"parts": [{"text": prompt}]}]
+    }, timeout=25)
 
-    r = requests.post(url, json=payload, timeout=25)
     data = r.json()
 
     if "candidates" not in data:
@@ -65,53 +58,41 @@ def call_gemini(prompt):
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 # =========================
-# WIKIPEDIA SEARCH (FIXED + SAFE)
+# WIKIPEDIA SEARCH (WITH LOGS)
 # =========================
 
 def wiki_search(query):
 
-    try:
-        search_url = "https://en.wikipedia.org/w/api.php"
+    print("\n🔎 SEARCH QUERY:", query)
 
-        r = requests.get(search_url, params={
+    try:
+        url = "https://en.wikipedia.org/w/api.php"
+
+        r = requests.get(url, params={
             "action": "query",
             "list": "search",
             "srsearch": query,
             "format": "json"
         }, timeout=10)
 
-        if r.status_code != 200:
-            return ""
+        print("📡 WIKI STATUS:", r.status_code)
 
         try:
             data = r.json()
-        except:
+        except Exception:
+            print("❌ WIKI NOT JSON:", r.text[:200])
             return ""
 
         results = data.get("query", {}).get("search", [])
 
-        if not results:
-            # fallback: simpler query
-            simple = query.split(" ")[0]
-
-            r = requests.get(search_url, params={
-                "action": "query",
-                "list": "search",
-                "srsearch": simple,
-                "format": "json"
-            }, timeout=10)
-
-            try:
-                data = r.json()
-            except:
-                return ""
-
-            results = data.get("query", {}).get("search", [])
+        print("📦 RESULTS COUNT:", len(results))
 
         if not results:
+            print("⚠️ NO RESULTS FOUND")
             return ""
 
         title = results[0]["title"]
+        print("📘 TOP RESULT:", title)
 
         summary_url = (
             "https://en.wikipedia.org/api/rest_v1/page/summary/"
@@ -120,17 +101,22 @@ def wiki_search(query):
 
         r2 = requests.get(summary_url, timeout=10)
 
-        if r2.status_code != 200:
-            return ""
+        print("📡 SUMMARY STATUS:", r2.status_code)
 
         try:
             data2 = r2.json()
-        except:
+        except Exception:
+            print("❌ SUMMARY NOT JSON:", r2.text[:200])
             return ""
 
-        return data2.get("extract", "")
+        extract = data2.get("extract", "")
 
-    except:
+        print("📄 EXTRACT FOUND:", bool(extract))
+
+        return extract
+
+    except Exception as e:
+        print("💥 SEARCH ERROR:", e)
         return ""
 
 # =========================
@@ -141,47 +127,35 @@ def web_search(query):
 
     wiki = wiki_search(query)
 
-    if not wiki:
-        return "No reliable information found."
+    if wiki:
+        return wiki
 
-    return wiki
-
-# =========================
-# CHATBOT MODE
-# =========================
-
-def ask_chatbot(prompt):
-
-    system = (
-        "You are ChatBotTCS for NationStates RMB. "
-        "Be short and use BBCode only."
-    )
-
-    return clean_bbcode(call_gemini(system + "\n\nUSER: " + prompt))
+    return "No reliable information found."
 
 # =========================
-# CHATSEARCH MODE
+# CHATSEARCH
 # =========================
 
 def ask_chatsearch(prompt):
 
     data = web_search(prompt)
 
+    print("🧠 FINAL SEARCH DATA:", data[:200])
+
     system = (
-        "Use the provided search data to answer accurately. "
+        "Use the search data to answer accurately. "
         "If empty, say you don't know."
     )
 
-    return clean_bbcode(
-        call_gemini(system + "\n\nSEARCH DATA:\n" + data + "\n\nQUESTION:\n" + prompt)
-    )
+    return clean_bbcode(call_gemini(
+        system + "\n\nSEARCH:\n" + data + "\n\nQUESTION:\n" + prompt
+    ))
 
 # =========================
-# POST RMB
+# BOT LOOP (UNCHANGED CORE)
 # =========================
 
 def post_rmb(text):
-
     prepare = {
         "c": "rmbpost",
         "nation": NATION,
@@ -193,7 +167,7 @@ def post_rmb(text):
     headers = HEADERS.copy()
     headers["X-Password"] = PASSWORD
 
-    r = requests.post(NS_API, data=prepare, headers=headers, timeout=20)
+    r = requests.post(NS_API, data=prepare, headers=headers)
 
     if "<SUCCESS>" not in r.text:
         print("POST FAILED")
@@ -202,39 +176,24 @@ def post_rmb(text):
     token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
     xpin = r.headers.get("X-Pin")
 
-    if not xpin:
-        print("NO XPIN")
-        return
+    headers["X-Pin"] = xpin
 
-    execute = {
+    requests.post(NS_API, data={
         "c": "rmbpost",
         "nation": NATION,
         "region": REGION,
         "text": text,
         "mode": "execute",
         "token": token
-    }
-
-    headers["X-Pin"] = xpin
-
-    requests.post(NS_API, data=execute, headers=headers, timeout=20)
-
-# =========================
-# GET MESSAGES
-# =========================
+    }, headers=headers)
 
 def get_messages():
     url = f"{NS_API}?region={REGION}&q=messages"
-    r = requests.get(url, headers=HEADERS, timeout=20)
-    return r.text
-
-# =========================
-# MAIN LOOP
-# =========================
+    return requests.get(url, headers=HEADERS).text
 
 def main():
 
-    print("Bot started...")
+    print("BOT STARTED")
 
     seen = set()
 
@@ -244,56 +203,37 @@ def main():
             xml = get_messages()
             root = ET.fromstring(xml)
 
-            posts = root.findall(".//POST")
+            for post in root.findall(".//POST"):
 
-            for post in posts:
-
-                post_id = post.attrib.get("id")
+                pid = post.attrib.get("id")
                 nation = post.find("NATION").text
                 message = post.find("MESSAGE").text
 
-                if not message:
+                if not message or pid in seen:
                     continue
 
                 if nation.lower() == NATION.lower():
                     continue
 
-                if post_id in seen:
-                    continue
-
                 msg = message.lower()
 
-                try:
+                if "#chatsearch" in msg:
 
-                    if "#chatbot" in msg:
-                        q = message.replace("#chatbot", "").strip()
-                        response = ask_chatbot(q or "Hello")
+                    query = message.replace("#chatsearch", "").strip()
 
-                    elif "#chatsearch" in msg:
-                        q = message.replace("#chatsearch", "").strip()
-                        response = ask_chatsearch(q or "Hello")
-
-                    else:
-                        continue
+                    response = ask_chatsearch(query or "hello")
 
                     response = response[:500]
 
                     post_rmb(response)
-                    seen.add(post_id)
+                    seen.add(pid)
 
                     time.sleep(15)
-
-                except AIModelError as e:
-                    print("AI FAILED:", e)
 
         except Exception as e:
             print("LOOP ERROR:", e)
 
         time.sleep(10)
-
-# =========================
-# RUN
-# =========================
 
 if __name__ == "__main__":
     main()
