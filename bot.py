@@ -44,26 +44,42 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# GEMINI SAFE PARSER
+# GET AVAILABLE MODELS (FIXES YOUR ERROR)
 # =========================
 
-def extract_gemini(data):
+def get_available_models():
     try:
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    except Exception:
-        print("⚠️ GEMINI RAW:", data)
-        return None
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
+        r = requests.get(url, timeout=20)
+        data = r.json()
+
+        models = []
+
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            methods = m.get("supportedGenerationMethods", [])
+
+            if "generateContent" in methods:
+                models.append(name.replace("models/", ""))
+
+        print("AVAILABLE MODELS:", models)
+
+        return models
+
+    except Exception as e:
+        print("MODEL FETCH ERROR:", e)
+        return []
 
 # =========================
-# GEMINI STRICT CALL
+# GEMINI CALL (STRICT)
 # =========================
 
 def call_gemini_strict(prompt):
 
-    models = [
-        "gemini-2.5-flash",
-        "gemini-1.5-flash"
-    ]
+    models = get_available_models()
+
+    if not models:
+        raise AIModelError("No Gemini models available")
 
     last_error = None
 
@@ -83,22 +99,25 @@ def call_gemini_strict(prompt):
                 ]
             }
 
-            r = requests.post(url, json=payload, timeout=20)
+            r = requests.post(url, json=payload, timeout=25)
             data = r.json()
+
+            # DEBUG (optional)
+            print("TRY MODEL:", model)
 
             if "error" in data:
                 last_error = data["error"]
                 continue
 
-            text = extract_gemini(data)
+            if "candidates" not in data:
+                last_error = data
+                continue
 
-            if text:
-                return text
-
-            last_error = data
+            return data["candidates"][0]["content"]["parts"][0]["text"]
 
         except Exception as e:
             last_error = str(e)
+            continue
 
     raise AIModelError(f"All models failed: {last_error}")
 
@@ -121,7 +140,7 @@ def wiki_search(query):
         return ""
 
 # =========================
-# DUCKDUCKGO (NO SCRAPING)
+# DUCKDUCKGO SEARCH (SAFE API)
 # =========================
 
 def ddg_search(query):
@@ -169,14 +188,14 @@ DUCKDUCKGO:
 """
 
 # =========================
-# GEMINI WRAPPERS
+# CHAT MODES
 # =========================
 
 def ask_chatbot(prompt):
 
     system = (
         "You are ChatBotTCS for NationStates RMB. "
-        "Be short, friendly, and use BBCode only."
+        "Be short, friendly, use BBCode only."
     )
 
     return clean_bbcode(call_gemini_strict(system + "\n\nUSER: " + prompt))
@@ -188,7 +207,7 @@ def ask_chatsearch(prompt):
 
     system = (
         "You are ChatBotTCS. Use search data to answer accurately. "
-        "Prefer Wikipedia. If empty, say you don't know."
+        "Prefer Wikipedia. If no useful data exists, say you don't know."
     )
 
     return clean_bbcode(
@@ -216,7 +235,7 @@ def post_rmb(text):
         r = requests.post(NS_API, data=prepare, headers=headers, timeout=20)
 
         if "<SUCCESS>" not in r.text:
-            print("POST PREPARE FAILED")
+            print("POST FAILED")
             return
 
         token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
@@ -245,7 +264,7 @@ def post_rmb(text):
         print("POST ERROR:", e)
 
 # =========================
-# GET MESSAGES
+# GET RMB MESSAGES
 # =========================
 
 def get_messages():
