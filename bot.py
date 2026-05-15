@@ -27,7 +27,7 @@ class AIModelError(Exception):
     pass
 
 # =========================
-# CLEANER
+# CLEAN TEXT
 # =========================
 
 def clean_bbcode(text):
@@ -40,7 +40,7 @@ def clean_bbcode(text):
     return text.replace("\n", " ").strip()
 
 # =========================
-# GEMINI (SINGLE STABLE MODEL)
+# GEMINI (SAFE)
 # =========================
 
 def call_gemini(prompt):
@@ -65,22 +65,12 @@ def call_gemini(prompt):
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 # =========================
-# MULTI-RESEARCH ENGINE
+# WIKIPEDIA SEARCH (FIXED + SAFE)
 # =========================
 
 def wiki_search(query):
 
     try:
-        # STEP 1: direct summary attempt
-        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
-        r = requests.get(url, timeout=10)
-
-        if r.status_code == 200:
-            data = r.json()
-            if data.get("extract"):
-                return data["extract"]
-
-        # STEP 2: search Wikipedia properly
         search_url = "https://en.wikipedia.org/w/api.php"
 
         r = requests.get(search_url, params={
@@ -90,12 +80,18 @@ def wiki_search(query):
             "format": "json"
         }, timeout=10)
 
-        data = r.json()
+        if r.status_code != 200:
+            return ""
+
+        try:
+            data = r.json()
+        except:
+            return ""
 
         results = data.get("query", {}).get("search", [])
 
         if not results:
-            # STEP 3: fallback query split (IMPORTANT FIX)
+            # fallback: simpler query
             simple = query.split(" ")[0]
 
             r = requests.get(search_url, params={
@@ -105,7 +101,11 @@ def wiki_search(query):
                 "format": "json"
             }, timeout=10)
 
-            data = r.json()
+            try:
+                data = r.json()
+            except:
+                return ""
+
             results = data.get("query", {}).get("search", [])
 
         if not results:
@@ -113,85 +113,71 @@ def wiki_search(query):
 
         title = results[0]["title"]
 
-        # STEP 4: final summary fetch
-        summary_url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + title.replace(" ", "_")
+        summary_url = (
+            "https://en.wikipedia.org/api/rest_v1/page/summary/"
+            + title.replace(" ", "_")
+        )
+
         r2 = requests.get(summary_url, timeout=10)
 
         if r2.status_code != 200:
             return ""
 
-        return r2.json().get("extract", "")
+        try:
+            data2 = r2.json()
+        except:
+            return ""
 
-    except Exception as e:
-        print("SEARCH ERROR:", e)
-        return ""
-# =========================
-# SIMPLE EXTRA SOURCE (SAFE FALLBACK FACT BUILDER)
-# =========================
-
-def simple_fallback(query):
-    try:
-        # lightweight “knowledge guess” via Wikipedia direct summary attempt
-        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
-        r = requests.get(url, timeout=10)
-
-        if r.status_code == 200:
-            return r.json().get("extract", "")
+        return data2.get("extract", "")
 
     except:
-        pass
-
-    return ""
+        return ""
 
 # =========================
-# MASTER RESEARCH SYSTEM
+# SEARCH WRAPPER
 # =========================
 
 def web_search(query):
 
-    wiki_multi = wiki_search(query)
-    wiki_single = simple_fallback(query)
+    wiki = wiki_search(query)
 
-    combined = f"""
-MULTI-WIKIPEDIA RESULTS:
-{wiki_multi}
+    if not wiki:
+        return "No reliable information found."
 
-SINGLE-FALLBACK:
-{wiki_single}
-""".strip()
-
-    return combined
+    return wiki
 
 # =========================
-# CHAT MODES
+# CHATBOT MODE
 # =========================
 
 def ask_chatbot(prompt):
 
     system = (
         "You are ChatBotTCS for NationStates RMB. "
-        "Be short, friendly, use BBCode only."
+        "Be short and use BBCode only."
     )
 
     return clean_bbcode(call_gemini(system + "\n\nUSER: " + prompt))
 
+# =========================
+# CHATSEARCH MODE
+# =========================
 
 def ask_chatsearch(prompt):
 
     data = web_search(prompt)
 
     system = (
-        "You are ChatBotTCS. Use the research data below to answer. "
-        "Combine all sources into one accurate response. "
+        "Use the provided search data to answer accurately. "
         "If empty, say you don't know."
     )
 
-    return clean_bbcode(call_gemini(
-        system + "\n\nRESEARCH DATA:\n" + data + "\n\nQUESTION:\n" + prompt
-    ))
+    return clean_bbcode(
+        call_gemini(system + "\n\nSEARCH DATA:\n" + data + "\n\nQUESTION:\n" + prompt)
+    )
 
 # =========================
-# RMB POST
+# POST RMB
 # =========================
 
 def post_rmb(text):
