@@ -14,7 +14,7 @@ PASSWORD = os.getenv("PASSWORD", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
-    "User-Agent": "ChatBotTCS NationStates Bot by Shabarish"
+    "User-Agent": "ChatBotTCS NationStates Bot"
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
@@ -34,17 +34,13 @@ def clean_bbcode(text):
     if not text:
         return "..."
 
-    text = text.replace("**", "")
-    text = text.replace("__", "")
-    text = text.replace("\n", " ")
-
-    for tag in ["[img]", "[/img]", "[url]", "[/url]", "[quote]", "[/quote]"]:
+    for tag in ["**", "__", "[img]", "[/img]", "[url]", "[/url]", "[quote]", "[/quote]"]:
         text = text.replace(tag, "")
 
-    return text.strip()
+    return text.replace("\n", " ").strip()
 
 # =========================
-# GEMINI (SAFE SINGLE MODEL)
+# GEMINI (SINGLE STABLE MODEL)
 # =========================
 
 def call_gemini(prompt):
@@ -56,76 +52,97 @@ def call_gemini(prompt):
 
     payload = {
         "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
+            {"parts": [{"text": prompt}]}
         ]
     }
 
-    r = requests.post(url, json=payload, timeout=20)
+    r = requests.post(url, json=payload, timeout=25)
     data = r.json()
 
-    try:
-        if "candidates" not in data:
-            raise AIModelError(str(data))
+    if "candidates" not in data:
+        raise AIModelError(str(data))
 
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-
-    except Exception as e:
-        raise AIModelError(str(e))
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
 # =========================
-# WIKIPEDIA (FIXED PROPER SEARCH)
+# MULTI-RESEARCH ENGINE
 # =========================
 
 def wiki_search(query):
-
     try:
-        search_url = "https://en.wikipedia.org/w/api.php"
+        url = "https://en.wikipedia.org/w/api.php"
 
-        params = {
+        r = requests.get(url, params={
             "action": "opensearch",
             "search": query,
-            "limit": 1,
+            "limit": 3,
             "namespace": 0,
             "format": "json"
-        }
+        }, timeout=10)
 
-        r = requests.get(search_url, params=params, timeout=10)
         data = r.json()
+        titles = data[1] if len(data) > 1 else []
 
-        if not data or len(data) < 2 or len(data[1]) == 0:
-            return ""
+        results = []
 
-        title = data[1][0]
+        for title in titles:
+            try:
+                summary_url = (
+                    "https://en.wikipedia.org/api/rest_v1/page/summary/"
+                    + title.replace(" ", "_")
+                )
 
-        summary_url = (
-            "https://en.wikipedia.org/api/rest_v1/page/summary/"
-            + title.replace(" ", "_")
-        )
+                r2 = requests.get(summary_url, timeout=10)
 
-        r2 = requests.get(summary_url, timeout=10)
+                if r2.status_code == 200:
+                    text = r2.json().get("extract", "")
+                    if text:
+                        results.append(f"{title}: {text}")
 
-        if r2.status_code != 200:
-            return ""
+            except:
+                continue
 
-        return r2.json().get("extract", "")
+        return "\n".join(results)
 
     except:
         return ""
 
 # =========================
-# MASTER SEARCH
+# SIMPLE EXTRA SOURCE (SAFE FALLBACK FACT BUILDER)
+# =========================
+
+def simple_fallback(query):
+    try:
+        # lightweight “knowledge guess” via Wikipedia direct summary attempt
+        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
+        r = requests.get(url, timeout=10)
+
+        if r.status_code == 200:
+            return r.json().get("extract", "")
+
+    except:
+        pass
+
+    return ""
+
+# =========================
+# MASTER RESEARCH SYSTEM
 # =========================
 
 def web_search(query):
 
-    wiki = wiki_search(query)
+    wiki_multi = wiki_search(query)
+    wiki_single = simple_fallback(query)
 
-    return f"""
-WIKIPEDIA:
-{wiki}
+    combined = f"""
+MULTI-WIKIPEDIA RESULTS:
+{wiki_multi}
+
+SINGLE-FALLBACK:
+{wiki_single}
 """.strip()
+
+    return combined
 
 # =========================
 # CHAT MODES
@@ -135,7 +152,7 @@ def ask_chatbot(prompt):
 
     system = (
         "You are ChatBotTCS for NationStates RMB. "
-        "Be short, friendly, and use BBCode only."
+        "Be short, friendly, use BBCode only."
     )
 
     return clean_bbcode(call_gemini(system + "\n\nUSER: " + prompt))
@@ -143,16 +160,17 @@ def ask_chatbot(prompt):
 
 def ask_chatsearch(prompt):
 
-    search_data = web_search(prompt)
+    data = web_search(prompt)
 
     system = (
-        "You are ChatBotTCS. Answer using the search data. "
+        "You are ChatBotTCS. Use the research data below to answer. "
+        "Combine all sources into one accurate response. "
         "If empty, say you don't know."
     )
 
-    return clean_bbcode(
-        call_gemini(system + "\n\nSEARCH DATA:\n" + search_data + "\n\nQUESTION:\n" + prompt)
-    )
+    return clean_bbcode(call_gemini(
+        system + "\n\nRESEARCH DATA:\n" + data + "\n\nQUESTION:\n" + prompt
+    ))
 
 # =========================
 # RMB POST
@@ -262,7 +280,7 @@ def main():
                     time.sleep(15)
 
                 except AIModelError as e:
-                    print("AI ERROR:", e)
+                    print("AI FAILED:", e)
 
         except Exception as e:
             print("LOOP ERROR:", e)
