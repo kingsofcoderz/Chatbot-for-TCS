@@ -20,6 +20,13 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
+# ERROR CLASS
+# =========================
+
+class AIModelError(Exception):
+    pass
+
+# =========================
 # CLEANER
 # =========================
 
@@ -37,7 +44,7 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# SAFE GEMINI PARSER
+# GEMINI SAFE PARSER
 # =========================
 
 def extract_gemini(data):
@@ -45,10 +52,58 @@ def extract_gemini(data):
         return data["candidates"][0]["content"]["parts"][0]["text"]
     except Exception:
         print("⚠️ GEMINI RAW:", data)
-        return "I couldn't generate a response right now."
+        return None
 
 # =========================
-# WIKIPEDIA (SAFE)
+# GEMINI STRICT CALL
+# =========================
+
+def call_gemini_strict(prompt):
+
+    models = [
+        "gemini-2.5-flash",
+        "gemini-1.5-flash"
+    ]
+
+    last_error = None
+
+    for model in models:
+
+        try:
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={GEMINI_API_KEY}"
+            )
+
+            payload = {
+                "contents": [
+                    {
+                        "parts": [{"text": prompt}]
+                    }
+                ]
+            }
+
+            r = requests.post(url, json=payload, timeout=20)
+            data = r.json()
+
+            if "error" in data:
+                last_error = data["error"]
+                continue
+
+            text = extract_gemini(data)
+
+            if text:
+                return text
+
+            last_error = data
+
+        except Exception as e:
+            last_error = str(e)
+
+    raise AIModelError(f"All models failed: {last_error}")
+
+# =========================
+# WIKIPEDIA SEARCH
 # =========================
 
 def wiki_search(query):
@@ -66,7 +121,7 @@ def wiki_search(query):
         return ""
 
 # =========================
-# DUCKDUCKGO (SAFE API)
+# DUCKDUCKGO (NO SCRAPING)
 # =========================
 
 def ddg_search(query):
@@ -101,6 +156,7 @@ def ddg_search(query):
 # =========================
 
 def web_search(query):
+
     wiki = wiki_search(query)
     ddg = ddg_search(query)
 
@@ -113,63 +169,30 @@ DUCKDUCKGO:
 """
 
 # =========================
-# GEMINI CALL (SAFE WRAPPER)
-# =========================
-
-def call_gemini(prompt, system_prompt=""):
-
-    if not GEMINI_API_KEY:
-        return "Gemini API key missing."
-
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    )
-
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {
-                        "text": system_prompt + "\n\n" + prompt
-                    }
-                ]
-            }
-        ]
-    }
-
-    try:
-        r = requests.post(url, json=payload, timeout=30)
-        data = r.json()
-
-        return clean_bbcode(extract_gemini(data))
-
-    except Exception as e:
-        print("GEMINI ERROR:", e)
-        return "AI service temporarily failed."
-
-# =========================
-# MODES
+# GEMINI WRAPPERS
 # =========================
 
 def ask_chatbot(prompt):
+
     system = (
         "You are ChatBotTCS for NationStates RMB. "
         "Be short, friendly, and use BBCode only."
     )
-    return call_gemini(prompt, system)
+
+    return clean_bbcode(call_gemini_strict(system + "\n\nUSER: " + prompt))
+
 
 def ask_chatsearch(prompt):
+
     search_data = web_search(prompt)
 
     system = (
         "You are ChatBotTCS. Use search data to answer accurately. "
-        "Prefer Wikipedia if useful. Ignore messy HTML."
+        "Prefer Wikipedia. If empty, say you don't know."
     )
 
-    return call_gemini(
-        f"SEARCH DATA:\n{search_data}\n\nQUESTION:\n{prompt}",
-        system
+    return clean_bbcode(
+        call_gemini_strict(system + "\n\nSEARCH:\n" + search_data + "\n\nQUESTION:\n" + prompt)
     )
 
 # =========================
@@ -222,7 +245,7 @@ def post_rmb(text):
         print("POST ERROR:", e)
 
 # =========================
-# GET RMB
+# GET MESSAGES
 # =========================
 
 def get_messages():
@@ -269,38 +292,24 @@ def main():
                 msg = message.lower()
                 response = None
 
-                # =====================
-                # CHATSEARCH
-                # =====================
-                if "#chatsearch" in msg:
-                    q = message.replace("#chatsearch", "").strip()
-                    if not q:
-                        q = "Hello"
-                    response = ask_chatsearch(q)
+                try:
 
-                # =====================
-                # CHATBOT
-                # =====================
-                elif "#chatbot" in msg:
-                    q = message.replace("#chatbot", "").strip()
-                    if not q:
-                        q = "Hello"
-                    response = ask_chatbot(q)
+                    if "#chatbot" in msg:
+                        q = message.replace("#chatbot", "").strip()
+                        response = ask_chatbot(q or "Hello")
 
-                # =====================
-                # POST SAFE
-                # =====================
-                if response:
+                    elif "#chatsearch" in msg:
+                        q = message.replace("#chatsearch", "").strip()
+                        response = ask_chatsearch(q or "Hello")
 
-                    response = response[:500]
+                    if response:
+                        response = response[:500]
+                        post_rmb(response)
+                        seen.add(post_id)
+                        time.sleep(15)
 
-                    print("AI:", response)
-
-                    post_rmb(response)
-
-                    seen.add(post_id)
-
-                    time.sleep(15)
+                except AIModelError as e:
+                    print("AI FAILED:", e)
 
         except Exception as e:
             print("LOOP ERROR:", e)
