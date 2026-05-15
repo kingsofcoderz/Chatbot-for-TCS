@@ -20,7 +20,7 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
-# ERROR CLASS
+# ERROR
 # =========================
 
 class AIModelError(Exception):
@@ -44,128 +44,72 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# GET AVAILABLE MODELS (FIXES YOUR ERROR)
+# GEMINI (SAFE SINGLE MODEL)
 # =========================
 
-def get_available_models():
+def call_gemini(prompt):
+
+    url = (
+        "https://generativelanguage.googleapis.com/v1beta/models/"
+        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    )
+
+    payload = {
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ]
+    }
+
+    r = requests.post(url, json=payload, timeout=20)
+    data = r.json()
+
     try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={GEMINI_API_KEY}"
-        r = requests.get(url, timeout=20)
-        data = r.json()
+        if "candidates" not in data:
+            raise AIModelError(str(data))
 
-        models = []
-
-        for m in data.get("models", []):
-            name = m.get("name", "")
-            methods = m.get("supportedGenerationMethods", [])
-
-            if "generateContent" in methods:
-                models.append(name.replace("models/", ""))
-
-        print("AVAILABLE MODELS:", models)
-
-        return models
+        return data["candidates"][0]["content"]["parts"][0]["text"]
 
     except Exception as e:
-        print("MODEL FETCH ERROR:", e)
-        return []
+        raise AIModelError(str(e))
 
 # =========================
-# GEMINI CALL (STRICT)
-# =========================
-
-def call_gemini_strict(prompt):
-
-    models = get_available_models()
-
-    if not models:
-        raise AIModelError("No Gemini models available")
-
-    last_error = None
-
-    for model in models:
-
-        try:
-            url = (
-                "https://generativelanguage.googleapis.com/v1beta/models/"
-                f"{model}:generateContent?key={GEMINI_API_KEY}"
-            )
-
-            payload = {
-                "contents": [
-                    {
-                        "parts": [{"text": prompt}]
-                    }
-                ]
-            }
-
-            r = requests.post(url, json=payload, timeout=25)
-            data = r.json()
-
-            # DEBUG (optional)
-            print("TRY MODEL:", model)
-
-            if "error" in data:
-                last_error = data["error"]
-                continue
-
-            if "candidates" not in data:
-                last_error = data
-                continue
-
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-
-        except Exception as e:
-            last_error = str(e)
-            continue
-
-    raise AIModelError(f"All models failed: {last_error}")
-
-# =========================
-# WIKIPEDIA SEARCH
+# WIKIPEDIA (FIXED PROPER SEARCH)
 # =========================
 
 def wiki_search(query):
+
     try:
-        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
-        r = requests.get(url, timeout=10)
+        search_url = "https://en.wikipedia.org/w/api.php"
 
-        if r.status_code != 200:
-            return ""
-
-        data = r.json()
-        return data.get("extract", "") or ""
-
-    except:
-        return ""
-
-# =========================
-# DUCKDUCKGO SEARCH (SAFE API)
-# =========================
-
-def ddg_search(query):
-    try:
-        url = "https://api.duckduckgo.com/"
         params = {
-            "q": query,
-            "format": "json",
-            "no_html": 1,
-            "skip_disambig": 1
+            "action": "opensearch",
+            "search": query,
+            "limit": 1,
+            "namespace": 0,
+            "format": "json"
         }
 
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(search_url, params=params, timeout=10)
         data = r.json()
 
-        results = []
+        if not data or len(data) < 2 or len(data[1]) == 0:
+            return ""
 
-        if data.get("AbstractText"):
-            results.append(data["AbstractText"])
+        title = data[1][0]
 
-        for item in data.get("RelatedTopics", [])[:5]:
-            if isinstance(item, dict) and "Text" in item:
-                results.append(item["Text"])
+        summary_url = (
+            "https://en.wikipedia.org/api/rest_v1/page/summary/"
+            + title.replace(" ", "_")
+        )
 
-        return "\n".join(results)
+        r2 = requests.get(summary_url, timeout=10)
+
+        if r2.status_code != 200:
+            return ""
+
+        return r2.json().get("extract", "")
 
     except:
         return ""
@@ -177,15 +121,11 @@ def ddg_search(query):
 def web_search(query):
 
     wiki = wiki_search(query)
-    ddg = ddg_search(query)
 
     return f"""
 WIKIPEDIA:
 {wiki}
-
-DUCKDUCKGO:
-{ddg}
-"""
+""".strip()
 
 # =========================
 # CHAT MODES
@@ -195,10 +135,10 @@ def ask_chatbot(prompt):
 
     system = (
         "You are ChatBotTCS for NationStates RMB. "
-        "Be short, friendly, use BBCode only."
+        "Be short, friendly, and use BBCode only."
     )
 
-    return clean_bbcode(call_gemini_strict(system + "\n\nUSER: " + prompt))
+    return clean_bbcode(call_gemini(system + "\n\nUSER: " + prompt))
 
 
 def ask_chatsearch(prompt):
@@ -206,12 +146,12 @@ def ask_chatsearch(prompt):
     search_data = web_search(prompt)
 
     system = (
-        "You are ChatBotTCS. Use search data to answer accurately. "
-        "Prefer Wikipedia. If no useful data exists, say you don't know."
+        "You are ChatBotTCS. Answer using the search data. "
+        "If empty, say you don't know."
     )
 
     return clean_bbcode(
-        call_gemini_strict(system + "\n\nSEARCH:\n" + search_data + "\n\nQUESTION:\n" + prompt)
+        call_gemini(system + "\n\nSEARCH DATA:\n" + search_data + "\n\nQUESTION:\n" + prompt)
     )
 
 # =========================
@@ -220,60 +160,51 @@ def ask_chatsearch(prompt):
 
 def post_rmb(text):
 
-    try:
-        prepare = {
-            "c": "rmbpost",
-            "nation": NATION,
-            "region": REGION,
-            "text": text,
-            "mode": "prepare"
-        }
+    prepare = {
+        "c": "rmbpost",
+        "nation": NATION,
+        "region": REGION,
+        "text": text,
+        "mode": "prepare"
+    }
 
-        headers = HEADERS.copy()
-        headers["X-Password"] = PASSWORD
+    headers = HEADERS.copy()
+    headers["X-Password"] = PASSWORD
 
-        r = requests.post(NS_API, data=prepare, headers=headers, timeout=20)
+    r = requests.post(NS_API, data=prepare, headers=headers, timeout=20)
 
-        if "<SUCCESS>" not in r.text:
-            print("POST FAILED")
-            return
+    if "<SUCCESS>" not in r.text:
+        print("POST FAILED")
+        return
 
-        token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
-        xpin = r.headers.get("X-Pin")
+    token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
+    xpin = r.headers.get("X-Pin")
 
-        if not xpin:
-            print("NO XPIN")
-            return
+    if not xpin:
+        print("NO XPIN")
+        return
 
-        execute = {
-            "c": "rmbpost",
-            "nation": NATION,
-            "region": REGION,
-            "text": text,
-            "mode": "execute",
-            "token": token
-        }
+    execute = {
+        "c": "rmbpost",
+        "nation": NATION,
+        "region": REGION,
+        "text": text,
+        "mode": "execute",
+        "token": token
+    }
 
-        headers["X-Pin"] = xpin
+    headers["X-Pin"] = xpin
 
-        r2 = requests.post(NS_API, data=execute, headers=headers, timeout=20)
-
-        print("POST:", r2.status_code)
-
-    except Exception as e:
-        print("POST ERROR:", e)
+    requests.post(NS_API, data=execute, headers=headers, timeout=20)
 
 # =========================
-# GET RMB MESSAGES
+# GET MESSAGES
 # =========================
 
 def get_messages():
-    try:
-        url = f"{NS_API}?region={REGION}&q=messages"
-        r = requests.get(url, headers=HEADERS, timeout=20)
-        return r.text
-    except:
-        return ""
+    url = f"{NS_API}?region={REGION}&q=messages"
+    r = requests.get(url, headers=HEADERS, timeout=20)
+    return r.text
 
 # =========================
 # MAIN LOOP
@@ -309,7 +240,6 @@ def main():
                     continue
 
                 msg = message.lower()
-                response = None
 
                 try:
 
@@ -321,14 +251,18 @@ def main():
                         q = message.replace("#chatsearch", "").strip()
                         response = ask_chatsearch(q or "Hello")
 
-                    if response:
-                        response = response[:500]
-                        post_rmb(response)
-                        seen.add(post_id)
-                        time.sleep(15)
+                    else:
+                        continue
+
+                    response = response[:500]
+
+                    post_rmb(response)
+                    seen.add(post_id)
+
+                    time.sleep(15)
 
                 except AIModelError as e:
-                    print("AI FAILED:", e)
+                    print("AI ERROR:", e)
 
         except Exception as e:
             print("LOOP ERROR:", e)
