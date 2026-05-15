@@ -69,44 +69,62 @@ def call_gemini(prompt):
 # =========================
 
 def wiki_search(query):
-    try:
-        url = "https://en.wikipedia.org/w/api.php"
 
-        r = requests.get(url, params={
-            "action": "opensearch",
-            "search": query,
-            "limit": 3,
-            "namespace": 0,
+    try:
+        # STEP 1: direct summary attempt
+        url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + query.replace(" ", "_")
+        r = requests.get(url, timeout=10)
+
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("extract"):
+                return data["extract"]
+
+        # STEP 2: search Wikipedia properly
+        search_url = "https://en.wikipedia.org/w/api.php"
+
+        r = requests.get(search_url, params={
+            "action": "query",
+            "list": "search",
+            "srsearch": query,
             "format": "json"
         }, timeout=10)
 
         data = r.json()
-        titles = data[1] if len(data) > 1 else []
 
-        results = []
+        results = data.get("query", {}).get("search", [])
 
-        for title in titles:
-            try:
-                summary_url = (
-                    "https://en.wikipedia.org/api/rest_v1/page/summary/"
-                    + title.replace(" ", "_")
-                )
+        if not results:
+            # STEP 3: fallback query split (IMPORTANT FIX)
+            simple = query.split(" ")[0]
 
-                r2 = requests.get(summary_url, timeout=10)
+            r = requests.get(search_url, params={
+                "action": "query",
+                "list": "search",
+                "srsearch": simple,
+                "format": "json"
+            }, timeout=10)
 
-                if r2.status_code == 200:
-                    text = r2.json().get("extract", "")
-                    if text:
-                        results.append(f"{title}: {text}")
+            data = r.json()
+            results = data.get("query", {}).get("search", [])
 
-            except:
-                continue
+        if not results:
+            return ""
 
-        return "\n".join(results)
+        title = results[0]["title"]
 
-    except:
+        # STEP 4: final summary fetch
+        summary_url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + title.replace(" ", "_")
+        r2 = requests.get(summary_url, timeout=10)
+
+        if r2.status_code != 200:
+            return ""
+
+        return r2.json().get("extract", "")
+
+    except Exception as e:
+        print("SEARCH ERROR:", e)
         return ""
-
 # =========================
 # SIMPLE EXTRA SOURCE (SAFE FALLBACK FACT BUILDER)
 # =========================
