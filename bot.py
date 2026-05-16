@@ -2,6 +2,7 @@ import requests
 import xml.etree.ElementTree as ET
 import time
 import os
+import re
 
 # =========================
 # CONFIG
@@ -15,8 +16,8 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/2.0 "
-        "(NationStates RMB research bot; contact: dev)"
+        "ChatBotTCS/3.0 "
+        "(NationStates RMB assistant; contact: dev)"
     )
 }
 
@@ -49,10 +50,12 @@ def clean_bbcode(text):
         "[/quote]"
     ]
 
-    for x in blocked:
-        text = text.replace(x, "")
+    for tag in blocked:
+        text = text.replace(tag, "")
 
-    return text.replace("\n", " ").strip()
+    text = text.replace("\n", " ")
+
+    return text.strip()
 
 # =========================
 # GEMINI
@@ -60,39 +63,99 @@ def clean_bbcode(text):
 
 def call_gemini(prompt):
 
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-    )
+    MODELS = [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite-preview-06-17",
+        "gemini-1.5-flash"
+    ]
 
-    payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt}
+    last_error = None
+
+    for model in MODELS:
+
+        try:
+
+            print(f"\n🤖 TRYING MODEL: {model}")
+
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={GEMINI_API_KEY}"
+            )
+
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt}
+                        ]
+                    }
                 ]
             }
-        ]
-    }
 
-    r = requests.post(
-        url,
-        json=payload,
-        timeout=30
+            r = requests.post(
+                url,
+                json=payload,
+                timeout=30
+            )
+
+            try:
+                data = r.json()
+            except:
+                continue
+
+            if "candidates" not in data:
+                last_error = data
+                continue
+
+            text = (
+                data["candidates"][0]
+                ["content"]["parts"][0]["text"]
+            )
+
+            return text
+
+        except Exception as e:
+            last_error = e
+
+    raise AIModelError(
+        f"All models failed: {last_error}"
     )
 
-    try:
-        data = r.json()
-    except Exception:
-        raise AIModelError("Gemini returned invalid JSON")
+# =========================
+# SMART RELEVANCE FILTER
+# =========================
 
-    if "candidates" not in data:
-        raise AIModelError(str(data))
+def relevant_sentences(text, query):
 
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    keywords = re.findall(r"\w+", query.lower())
+
+    sentences = re.split(
+        r'(?<=[.!?]) +',
+        text
+    )
+
+    good = []
+
+    for s in sentences:
+
+        s_lower = s.lower()
+
+        score = 0
+
+        for k in keywords:
+            if k in s_lower:
+                score += 1
+
+        if score >= 1:
+            good.append(s)
+
+    if not good:
+        return text[:500]
+
+    return " ".join(good[:8])
 
 # =========================
-# MULTI-PAGE WIKIPEDIA SEARCH
+# MULTI WIKI SEARCH
 # =========================
 
 def wiki_search(query):
@@ -101,7 +164,9 @@ def wiki_search(query):
 
     try:
 
-        search_url = "https://en.wikipedia.org/w/api.php"
+        search_url = (
+            "https://en.wikipedia.org/w/api.php"
+        )
 
         r = requests.get(
             search_url,
@@ -124,18 +189,17 @@ def wiki_search(query):
             print("❌ SEARCH NOT JSON")
             return ""
 
-        results = data.get("query", {}).get("search", [])
+        results = (
+            data.get("query", {})
+            .get("search", [])
+        )
 
-        print("📦 RESULTS FOUND:", len(results))
+        print("📦 RESULTS:", len(results))
 
         if not results:
             return ""
 
         collected = []
-
-        # =========================
-        # CHECK MULTIPLE ARTICLES
-        # =========================
 
         for result in results:
 
@@ -143,7 +207,7 @@ def wiki_search(query):
 
                 title = result["title"]
 
-                print("📘 CHECKING:", title)
+                print("📘 ARTICLE:", title)
 
                 summary_url = (
                     "https://en.wikipedia.org/api/rest_v1/page/summary/"
@@ -156,14 +220,12 @@ def wiki_search(query):
                     timeout=10
                 )
 
-                print("📡 SUMMARY STATUS:", r2.status_code)
-
                 if r2.status_code != 200:
                     continue
 
                 try:
                     data2 = r2.json()
-                except Exception:
+                except:
                     continue
 
                 extract = data2.get("extract", "")
@@ -171,19 +233,31 @@ def wiki_search(query):
                 if not extract:
                     continue
 
-                # Trim huge articles
-                extract = extract[:800]
+                # =========================
+                # RELEVANCE FILTER
+                # =========================
+
+                extract = relevant_sentences(
+                    extract,
+                    query
+                )
 
                 collected.append(
-                    f"{title}:\n{extract}"
+                    f"{title}: {extract}"
                 )
 
             except Exception as e:
                 print("⚠️ ARTICLE ERROR:", e)
 
-        print("🧠 ARTICLES COLLECTED:", len(collected))
+        print("🧠 COLLECTED:", len(collected))
 
-        return "\n\n".join(collected)
+        final = "\n\n".join(collected)
+
+        # IMPORTANT:
+        # avoid gigantic prompts
+        final = final[:3000]
+
+        return final
 
     except Exception as e:
         print("💥 SEARCH ERROR:", e)
@@ -195,47 +269,51 @@ def wiki_search(query):
 
 def web_search(query):
 
-    research = wiki_search(query)
+    result = wiki_search(query)
 
-    if not research:
+    if not result:
         return "No reliable information found."
 
-    return research
+    return result
 
 # =========================
-# CHATBOT MODE
+# NORMAL CHAT
 # =========================
 
 def ask_chatbot(prompt):
 
     system = (
-        "You are ChatBotTCS for NationStates RMB. "
-        "Be short, friendly, and use BBCode only."
+        "You are ChatBotTCS on NationStates RMB. "
+        "Be short, friendly, natural, and use BBCode only."
+    )
+
+    final_prompt = (
+        system
+        + "\n\nUSER:\n"
+        + prompt
     )
 
     return clean_bbcode(
-        call_gemini(
-            system + "\n\nUSER:\n" + prompt
-        )
+        call_gemini(final_prompt)
     )
 
 # =========================
-# CHATSEARCH MODE
+# SEARCH CHAT
 # =========================
 
 def ask_chatsearch(prompt):
 
     research = web_search(prompt)
 
-    print("\n🧠 FINAL RESEARCH:")
+    print("\n🧠 FINAL RESEARCH:\n")
     print(research[:1000])
 
     system = (
-        "You are ChatBotTCS. "
-        "Answer ONLY using the research data provided. "
-        "Use the newest and most relevant information. "
-        "Do not guess or hallucinate. "
-        "If uncertain, say you don't know."
+        "You are a search assistant. "
+        "Answer the QUESTION directly and briefly using ONLY the research data. "
+        "Do not add unrelated background details. "
+        "Do not summarize history unless asked. "
+        "Prefer one direct answer."
     )
 
     final_prompt = (
@@ -246,9 +324,9 @@ def ask_chatsearch(prompt):
         + prompt
     )
 
-    return clean_bbcode(
-        call_gemini(final_prompt)
-    )
+    response = call_gemini(final_prompt)
+
+    return clean_bbcode(response)
 
 # =========================
 # RMB POST
@@ -256,7 +334,7 @@ def ask_chatsearch(prompt):
 
 def post_rmb(text):
 
-    prepare = {
+    prepare_data = {
         "c": "rmbpost",
         "nation": NATION,
         "region": REGION,
@@ -269,13 +347,14 @@ def post_rmb(text):
 
     r = requests.post(
         NS_API,
-        data=prepare,
+        data=prepare_data,
         headers=headers,
         timeout=20
     )
 
     if "<SUCCESS>" not in r.text:
-        print("❌ POST FAILED")
+        print("❌ PREPARE FAILED")
+        print(r.text)
         return
 
     token = (
@@ -290,7 +369,7 @@ def post_rmb(text):
         print("❌ NO XPIN")
         return
 
-    execute = {
+    execute_data = {
         "c": "rmbpost",
         "nation": NATION,
         "region": REGION,
@@ -303,15 +382,15 @@ def post_rmb(text):
 
     r2 = requests.post(
         NS_API,
-        data=execute,
+        data=execute_data,
         headers=headers,
         timeout=20
     )
 
-    print("✅ RMB POSTED:", r2.status_code)
+    print("✅ POSTED:", r2.status_code)
 
 # =========================
-# GET RMB POSTS
+# RMB READER
 # =========================
 
 def get_messages():
@@ -337,21 +416,21 @@ def main():
 
     print("🚀 BOT STARTED")
 
-    seen = set()
+    seen_posts = set()
 
     while True:
 
         try:
 
-            xml = get_messages()
+            xml_data = get_messages()
 
-            root = ET.fromstring(xml)
+            root = ET.fromstring(xml_data)
 
             posts = root.findall(".//POST")
 
             for post in posts:
 
-                pid = post.attrib.get("id")
+                post_id = post.attrib.get("id")
 
                 nation = post.find("NATION").text
                 message = post.find("MESSAGE").text
@@ -362,14 +441,14 @@ def main():
                 if nation.lower() == NATION.lower():
                     continue
 
-                if pid in seen:
+                if post_id in seen_posts:
                     continue
 
                 msg = message.lower()
 
-                response = None
-
                 try:
+
+                    response = None
 
                     # =========================
                     # NORMAL CHAT
@@ -377,30 +456,36 @@ def main():
 
                     if "#chatbot" in msg:
 
-                        q = (
+                        cleaned = (
                             message
                             .replace("#chatbot", "")
                             .strip()
                         )
 
+                        if not cleaned:
+                            cleaned = "Hello"
+
                         response = ask_chatbot(
-                            q or "Hello"
+                            cleaned
                         )
 
                     # =========================
-                    # RESEARCH MODE
+                    # SEARCH MODE
                     # =========================
 
                     elif "#chatsearch" in msg:
 
-                        q = (
+                        cleaned = (
                             message
                             .replace("#chatsearch", "")
                             .strip()
                         )
 
+                        if not cleaned:
+                            cleaned = "Hello"
+
                         response = ask_chatsearch(
-                            q or "Hello"
+                            cleaned
                         )
 
                     else:
@@ -413,7 +498,7 @@ def main():
 
                     post_rmb(response)
 
-                    seen.add(pid)
+                    seen_posts.add(post_id)
 
                     time.sleep(15)
 
@@ -428,7 +513,7 @@ def main():
         time.sleep(10)
 
 # =========================
-# RUN
+# START
 # =========================
 
 if __name__ == "__main__":
