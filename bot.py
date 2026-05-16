@@ -14,16 +14,20 @@ PASSWORD = os.getenv("PASSWORD", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
-    "User-Agent": "ChatBotTCS Debug Bot"
+    "User-Agent": "ChatBotTCS/1.0 (NationStates RMB bot; contact: dev) requests"
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
+
+# =========================
+# ERROR CLASS
+# =========================
 
 class AIModelError(Exception):
     pass
 
 # =========================
-# CLEANER
+# CLEAN TEXT
 # =========================
 
 def clean_bbcode(text):
@@ -36,7 +40,7 @@ def clean_bbcode(text):
     return text.replace("\n", " ").strip()
 
 # =========================
-# GEMINI
+# GEMINI (SAFE)
 # =========================
 
 def call_gemini(prompt):
@@ -58,7 +62,7 @@ def call_gemini(prompt):
     return data["candidates"][0]["content"]["parts"][0]["text"]
 
 # =========================
-# WIKIPEDIA SEARCH (WITH LOGS)
+# WIKIPEDIA SEARCH (FIXED + SAFE + LOGS)
 # =========================
 
 def wiki_search(query):
@@ -66,29 +70,48 @@ def wiki_search(query):
     print("\n🔎 SEARCH QUERY:", query)
 
     try:
-        url = "https://en.wikipedia.org/w/api.php"
+        search_url = "https://en.wikipedia.org/w/api.php"
 
-        r = requests.get(url, params={
+        # STEP 1: search
+        r = requests.get(search_url, params={
             "action": "query",
             "list": "search",
             "srsearch": query,
             "format": "json"
-        }, timeout=10)
+        }, headers=HEADERS, timeout=10)
 
-        print("📡 WIKI STATUS:", r.status_code)
+        print("📡 SEARCH STATUS:", r.status_code)
 
         try:
             data = r.json()
         except Exception:
-            print("❌ WIKI NOT JSON:", r.text[:200])
+            print("❌ BLOCKED OR NON-JSON:", r.text[:200])
             return ""
 
         results = data.get("query", {}).get("search", [])
 
-        print("📦 RESULTS COUNT:", len(results))
+        print("📦 RESULTS FOUND:", len(results))
 
         if not results:
-            print("⚠️ NO RESULTS FOUND")
+            print("⚠️ NO RESULTS → retrying simple query")
+
+            simple = query.split(" ")[0]
+
+            r = requests.get(search_url, params={
+                "action": "query",
+                "list": "search",
+                "srsearch": simple,
+                "format": "json"
+            }, headers=HEADERS, timeout=10)
+
+            try:
+                data = r.json()
+                results = data.get("query", {}).get("search", [])
+            except:
+                return ""
+
+        if not results:
+            print("❌ STILL NO RESULTS")
             return ""
 
         title = results[0]["title"]
@@ -99,7 +122,7 @@ def wiki_search(query):
             + title.replace(" ", "_")
         )
 
-        r2 = requests.get(summary_url, timeout=10)
+        r2 = requests.get(summary_url, headers=HEADERS, timeout=10)
 
         print("📡 SUMMARY STATUS:", r2.status_code)
 
@@ -111,7 +134,7 @@ def wiki_search(query):
 
         extract = data2.get("extract", "")
 
-        print("📄 EXTRACT FOUND:", bool(extract))
+        print("📄 EXTRACT OK:", bool(extract))
 
         return extract
 
@@ -133,8 +156,18 @@ def web_search(query):
     return "No reliable information found."
 
 # =========================
-# CHATSEARCH
+# GEMINI MODES
 # =========================
+
+def ask_chatbot(prompt):
+
+    system = (
+        "You are ChatBotTCS for NationStates RMB. "
+        "Be short, friendly, and use BBCode only."
+    )
+
+    return clean_bbcode(call_gemini(system + "\n\nUSER: " + prompt))
+
 
 def ask_chatsearch(prompt):
 
@@ -144,18 +177,19 @@ def ask_chatsearch(prompt):
 
     system = (
         "Use the search data to answer accurately. "
-        "If empty, say you don't know."
+        "If no data exists, say you don't know."
     )
 
-    return clean_bbcode(call_gemini(
-        system + "\n\nSEARCH:\n" + data + "\n\nQUESTION:\n" + prompt
-    ))
+    return clean_bbcode(
+        call_gemini(system + "\n\nSEARCH:\n" + data + "\n\nQUESTION:\n" + prompt)
+    )
 
 # =========================
-# BOT LOOP (UNCHANGED CORE)
+# RMB POST
 # =========================
 
 def post_rmb(text):
+
     prepare = {
         "c": "rmbpost",
         "nation": NATION,
@@ -167,7 +201,7 @@ def post_rmb(text):
     headers = HEADERS.copy()
     headers["X-Password"] = PASSWORD
 
-    r = requests.post(NS_API, data=prepare, headers=headers)
+    r = requests.post(NS_API, data=prepare, headers=headers, timeout=20)
 
     if "<SUCCESS>" not in r.text:
         print("POST FAILED")
@@ -176,20 +210,34 @@ def post_rmb(text):
     token = r.text.split("<SUCCESS>")[1].split("</SUCCESS>")[0]
     xpin = r.headers.get("X-Pin")
 
-    headers["X-Pin"] = xpin
+    if not xpin:
+        print("NO XPIN")
+        return
 
-    requests.post(NS_API, data={
+    execute = {
         "c": "rmbpost",
         "nation": NATION,
         "region": REGION,
         "text": text,
         "mode": "execute",
         "token": token
-    }, headers=headers)
+    }
+
+    headers["X-Pin"] = xpin
+
+    requests.post(NS_API, data=execute, headers=headers, timeout=20)
+
+# =========================
+# GET MESSAGES
+# =========================
 
 def get_messages():
     url = f"{NS_API}?region={REGION}&q=messages"
-    return requests.get(url, headers=HEADERS).text
+    return requests.get(url, headers=HEADERS, timeout=20).text
+
+# =========================
+# MAIN LOOP
+# =========================
 
 def main():
 
@@ -217,11 +265,18 @@ def main():
 
                 msg = message.lower()
 
-                if "#chatsearch" in msg:
+                try:
 
-                    query = message.replace("#chatsearch", "").strip()
+                    if "#chatbot" in msg:
+                        q = message.replace("#chatbot", "").strip()
+                        response = ask_chatbot(q or "Hello")
 
-                    response = ask_chatsearch(query or "hello")
+                    elif "#chatsearch" in msg:
+                        q = message.replace("#chatsearch", "").strip()
+                        response = ask_chatsearch(q or "Hello")
+
+                    else:
+                        continue
 
                     response = response[:500]
 
@@ -229,6 +284,9 @@ def main():
                     seen.add(pid)
 
                     time.sleep(15)
+
+                except AIModelError as e:
+                    print("AI FAILED:", e)
 
         except Exception as e:
             print("LOOP ERROR:", e)
