@@ -17,7 +17,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/6.0 "
+        "ChatBotTCS/7.0 "
         "(NationStates RMB AI Bot)"
     )
 }
@@ -29,7 +29,6 @@ NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 # =========================
 
 conversation_history = []
-
 MAX_MEMORY = 8
 
 # =========================
@@ -81,7 +80,7 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# SAVE MEMORY
+# MEMORY SAVE
 # =========================
 
 def save_memory(nation, user_msg, bot_msg):
@@ -100,7 +99,7 @@ def save_memory(nation, user_msg, bot_msg):
 
     log(
         "MEMORY",
-        f"Saved memory. Total = {len(conversation_history)}"
+        f"Memory count = {len(conversation_history)}"
     )
 
 # =========================
@@ -127,7 +126,7 @@ def build_context():
     return "\n".join(context)
 
 # =========================
-# GEMINI API
+# GEMINI
 # =========================
 
 def call_gemini(prompt):
@@ -146,7 +145,7 @@ def call_gemini(prompt):
 
             log(
                 "AI",
-                f"Trying model: {model}"
+                f"Trying {model}"
             )
 
             url = (
@@ -174,7 +173,7 @@ def call_gemini(prompt):
 
             log(
                 "HTTP",
-                f"{model} status = {r.status_code}"
+                f"{model} -> {r.status_code}"
             )
 
             try:
@@ -230,6 +229,64 @@ def call_gemini(prompt):
     )
 
 # =========================
+# QUERY OPTIMIZER
+# =========================
+
+def improve_query(query, context):
+
+    try:
+
+        prompt = f"""
+You are a search query optimizer.
+
+Convert the user's message into a short,
+clear Wikipedia search query.
+
+Rules:
+- Keep important names
+- Remove filler words
+- Make it searchable
+- Use context if needed
+- Output ONLY the search query
+- No explanations
+
+CONTEXT:
+{context}
+
+USER QUESTION:
+{query}
+
+SEARCH QUERY:
+"""
+
+        response = call_gemini(prompt)
+
+        response = (
+            response
+            .replace("\n", " ")
+            .strip()
+        )
+
+        if len(response) < 3:
+            return query
+
+        log(
+            "QUERY",
+            f"Optimized = {response}"
+        )
+
+        return response[:100]
+
+    except Exception as e:
+
+        log(
+            "ERROR",
+            f"Query optimizer failed: {e}"
+        )
+
+        return query
+
+# =========================
 # RELEVANCE FILTER
 # =========================
 
@@ -262,32 +319,9 @@ def relevant_sentences(text, query):
             good.append(sentence)
 
     if not good:
-        return text[:700]
+        return text[:1000]
 
-    return " ".join(good[:10])
-
-# =========================
-# SMART QUERY REWRITE
-# =========================
-
-def improve_query(query, context):
-
-    q = query.lower()
-
-    if (
-        "his full name" in q
-        and "vijay" in context.lower()
-    ):
-        return "What is Vijay full name"
-
-    if (
-        "current cm" in q
-    ):
-        return (
-            "Current Chief Minister of Tamil Nadu"
-        )
-
-    return query
+    return " ".join(good[:12])
 
 # =========================
 # WIKI SEARCH
@@ -321,7 +355,7 @@ def wiki_search(query):
 
         log(
             "HTTP",
-            f"Wikipedia status = {r.status_code}"
+            f"Wikipedia search = {r.status_code}"
         )
 
         try:
@@ -358,7 +392,7 @@ def wiki_search(query):
 
                 log(
                     "ARTICLE",
-                    f"Checking: {title}"
+                    f"Checking {title}"
                 )
 
                 r2 = requests.get(
@@ -366,7 +400,7 @@ def wiki_search(query):
                     params={
                         "action": "query",
                         "prop": "extracts",
-                        "exintro": True,
+                        "exintro": False,
                         "explaintext": True,
                         "titles": title,
                         "format": "json"
@@ -402,7 +436,7 @@ def wiki_search(query):
                         query
                     )
 
-                    if len(extract) < 40:
+                    if len(extract) < 50:
                         continue
 
                     collected.append(
@@ -411,7 +445,7 @@ def wiki_search(query):
 
                     log(
                         "ARTICLE",
-                        f"Added: {title}"
+                        f"Added {title}"
                     )
 
             except Exception as e:
@@ -428,7 +462,7 @@ def wiki_search(query):
             f"Collected = {len(collected)}"
         )
 
-        return final[:4000]
+        return final[:5000]
 
     except Exception as e:
 
@@ -451,7 +485,7 @@ def web_search(query):
 
         log(
             "SEARCH",
-            "No reliable info"
+            "No reliable information"
         )
 
         return "No reliable information found."
@@ -488,36 +522,36 @@ def ask_chatbot(prompt, context):
 
 def ask_chatsearch(prompt, context):
 
-    improved = improve_query(
+    optimized_query = improve_query(
         prompt,
         context
     )
 
-    log(
-        "SEARCH",
-        f"Improved query = {improved}"
+    research = web_search(
+        optimized_query
     )
-
-    research = web_search(improved)
 
     log(
         "RESEARCH",
-        research[:1000]
+        research[:1200]
     )
 
     system = (
-        "You are a search assistant. "
-        "Use research data first. "
-        "Use conversation context if needed. "
-        "Prioritize current information. "
-        "Be direct and concise. "
-        "Do not invent facts."
+        "You are a search assistant.\n"
+        "Answer using the research data.\n"
+        "Use context if needed.\n"
+        "Prioritize current information.\n"
+        "Be concise and direct.\n"
+        "Do not invent facts.\n"
+        "If multiple answers exist, pick the most likely current one."
     )
 
     final_prompt = (
         system
         + "\n\nCONTEXT:\n"
         + context
+        + "\n\nSEARCH QUERY:\n"
+        + optimized_query
         + "\n\nRESEARCH DATA:\n"
         + research
         + "\n\nQUESTION:\n"
@@ -536,7 +570,7 @@ def post_rmb(text):
 
     log(
         "POST",
-        f"Posting ({len(text)} chars)"
+        f"Posting {len(text)} chars"
     )
 
     prepare_data = {
@@ -608,7 +642,7 @@ def post_rmb(text):
 
     log(
         "POST",
-        f"Execute status = {r2.status_code}"
+        f"Execute = {r2.status_code}"
     )
 
 # =========================
@@ -655,7 +689,7 @@ def main():
 
             log(
                 "RMB",
-                f"Posts fetched = {len(posts)}"
+                f"Fetched {len(posts)} posts"
             )
 
             context = build_context()
@@ -678,7 +712,7 @@ def main():
 
                 log(
                     "MESSAGE",
-                    f"{nation}: {message[:100]}"
+                    f"{nation}: {message[:120]}"
                 )
 
                 msg = message.lower()
@@ -686,6 +720,10 @@ def main():
                 response = None
 
                 try:
+
+                    # =========================
+                    # CHATBOT MODE
+                    # =========================
 
                     if "#chatbot" in msg:
 
@@ -702,6 +740,10 @@ def main():
                             cleaned,
                             context
                         )
+
+                    # =========================
+                    # SEARCH MODE
+                    # =========================
 
                     elif "#chatsearch" in msg:
 
@@ -752,7 +794,7 @@ def main():
 
             log(
                 "CRASH",
-                f"Loop crashed: {e}"
+                f"Main loop crashed: {e}"
             )
 
         time.sleep(10)
