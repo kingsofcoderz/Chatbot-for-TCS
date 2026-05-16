@@ -17,12 +17,20 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/5.0 "
-        "(NationStates RMB research bot)"
+        "ChatBotTCS/6.0 "
+        "(NationStates RMB AI Bot)"
     )
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
+
+# =========================
+# MEMORY
+# =========================
+
+conversation_history = []
+
+MAX_MEMORY = 8
 
 # =========================
 # LOGGER
@@ -71,6 +79,52 @@ def clean_bbcode(text):
     text = text.replace("\n", " ")
 
     return text.strip()
+
+# =========================
+# SAVE MEMORY
+# =========================
+
+def save_memory(nation, user_msg, bot_msg):
+
+    global conversation_history
+
+    conversation_history.append({
+        "nation": nation,
+        "user": user_msg,
+        "bot": bot_msg
+    })
+
+    conversation_history = (
+        conversation_history[-MAX_MEMORY:]
+    )
+
+    log(
+        "MEMORY",
+        f"Saved memory. Total = {len(conversation_history)}"
+    )
+
+# =========================
+# BUILD CONTEXT
+# =========================
+
+def build_context():
+
+    if not conversation_history:
+        return "No previous context."
+
+    context = []
+
+    for item in conversation_history:
+
+        context.append(
+            f"{item['nation']} said: {item['user']}"
+        )
+
+        context.append(
+            f"Bot replied: {item['bot']}"
+        )
+
+    return "\n".join(context)
 
 # =========================
 # GEMINI API
@@ -129,7 +183,7 @@ def call_gemini(prompt):
 
                 log(
                     "ERROR",
-                    f"{model} returned invalid JSON"
+                    f"{model} invalid JSON"
                 )
 
                 continue
@@ -140,7 +194,12 @@ def call_gemini(prompt):
 
                 log(
                     "ERROR",
-                    f"{model} failed: {str(data)[:300]}"
+                    f"{model} failed"
+                )
+
+                log(
+                    "DEBUG",
+                    str(data)[:500]
                 )
 
                 continue
@@ -208,7 +267,30 @@ def relevant_sentences(text, query):
     return " ".join(good[:10])
 
 # =========================
-# MULTI WIKI SEARCH
+# SMART QUERY REWRITE
+# =========================
+
+def improve_query(query, context):
+
+    q = query.lower()
+
+    if (
+        "his full name" in q
+        and "vijay" in context.lower()
+    ):
+        return "What is Vijay full name"
+
+    if (
+        "current cm" in q
+    ):
+        return (
+            "Current Chief Minister of Tamil Nadu"
+        )
+
+    return query
+
+# =========================
+# WIKI SEARCH
 # =========================
 
 def wiki_search(query):
@@ -231,7 +313,7 @@ def wiki_search(query):
                 "list": "search",
                 "srsearch": query,
                 "format": "json",
-                "srlimit": 5
+                "srlimit": 3
             },
             headers=HEADERS,
             timeout=15
@@ -239,7 +321,7 @@ def wiki_search(query):
 
         log(
             "HTTP",
-            f"Wikipedia search status = {r.status_code}"
+            f"Wikipedia status = {r.status_code}"
         )
 
         try:
@@ -248,12 +330,7 @@ def wiki_search(query):
 
             log(
                 "ERROR",
-                "Wikipedia returned invalid JSON"
-            )
-
-            log(
-                "DEBUG",
-                r.text[:500]
+                "Wikipedia invalid JSON"
             )
 
             return ""
@@ -265,7 +342,7 @@ def wiki_search(query):
 
         log(
             "SEARCH",
-            f"Results found = {len(results)}"
+            f"Results = {len(results)}"
         )
 
         if not results:
@@ -301,12 +378,6 @@ def wiki_search(query):
                 try:
                     data2 = r2.json()
                 except:
-
-                    log(
-                        "WARN",
-                        f"Invalid JSON for {title}"
-                    )
-
                     continue
 
                 pages = (
@@ -324,12 +395,6 @@ def wiki_search(query):
                     )
 
                     if not extract:
-
-                        log(
-                            "WARN",
-                            f"No extract for {title}"
-                        )
-
                         continue
 
                     extract = relevant_sentences(
@@ -338,12 +403,6 @@ def wiki_search(query):
                     )
 
                     if len(extract) < 40:
-
-                        log(
-                            "WARN",
-                            f"Extract too short for {title}"
-                        )
-
                         continue
 
                     collected.append(
@@ -366,7 +425,7 @@ def wiki_search(query):
 
         log(
             "SEARCH",
-            f"Collected articles = {len(collected)}"
+            f"Collected = {len(collected)}"
         )
 
         return final[:4000]
@@ -392,7 +451,7 @@ def web_search(query):
 
         log(
             "SEARCH",
-            "No research found"
+            "No reliable info"
         )
 
         return "No reliable information found."
@@ -403,15 +462,18 @@ def web_search(query):
 # NORMAL CHAT
 # =========================
 
-def ask_chatbot(prompt):
+def ask_chatbot(prompt, context):
 
     system = (
         "You are ChatBotTCS on NationStates RMB. "
-        "Be short, friendly, natural, and use BBCode only."
+        "Be short, friendly, and natural. "
+        "Use BBCode only."
     )
 
     final_prompt = (
         system
+        + "\n\nCONTEXT:\n"
+        + context
         + "\n\nUSER:\n"
         + prompt
     )
@@ -424,9 +486,19 @@ def ask_chatbot(prompt):
 # SEARCH CHAT
 # =========================
 
-def ask_chatsearch(prompt):
+def ask_chatsearch(prompt, context):
 
-    research = web_search(prompt)
+    improved = improve_query(
+        prompt,
+        context
+    )
+
+    log(
+        "SEARCH",
+        f"Improved query = {improved}"
+    )
+
+    research = web_search(improved)
 
     log(
         "RESEARCH",
@@ -435,15 +507,17 @@ def ask_chatsearch(prompt):
 
     system = (
         "You are a search assistant. "
-        "Answer ONLY using the research data. "
-        "Prioritize current information first. "
+        "Use research data first. "
+        "Use conversation context if needed. "
+        "Prioritize current information. "
         "Be direct and concise. "
-        "Do not add unrelated history. "
-        "If uncertain, say you don't know."
+        "Do not invent facts."
     )
 
     final_prompt = (
         system
+        + "\n\nCONTEXT:\n"
+        + context
         + "\n\nRESEARCH DATA:\n"
         + research
         + "\n\nQUESTION:\n"
@@ -462,7 +536,7 @@ def post_rmb(text):
 
     log(
         "POST",
-        f"Posting RMB message ({len(text)} chars)"
+        f"Posting ({len(text)} chars)"
     )
 
     prepare_data = {
@@ -509,7 +583,7 @@ def post_rmb(text):
 
         log(
             "ERROR",
-            "No X-Pin received"
+            "Missing X-Pin"
         )
 
         return
@@ -538,7 +612,7 @@ def post_rmb(text):
     )
 
 # =========================
-# RMB READER
+# RMB FETCH
 # =========================
 
 def get_messages():
@@ -584,6 +658,8 @@ def main():
                 f"Posts fetched = {len(posts)}"
             )
 
+            context = build_context()
+
             for post in posts:
 
                 post_id = post.attrib.get("id")
@@ -622,13 +698,9 @@ def main():
                         if not cleaned:
                             cleaned = "Hello"
 
-                        log(
-                            "MODE",
-                            "Normal chatbot mode"
-                        )
-
                         response = ask_chatbot(
-                            cleaned
+                            cleaned,
+                            context
                         )
 
                     elif "#chatsearch" in msg:
@@ -642,13 +714,9 @@ def main():
                         if not cleaned:
                             cleaned = "Hello"
 
-                        log(
-                            "MODE",
-                            "Search mode"
-                        )
-
                         response = ask_chatsearch(
-                            cleaned
+                            cleaned,
+                            context
                         )
 
                     else:
@@ -662,6 +730,12 @@ def main():
                     )
 
                     post_rmb(response)
+
+                    save_memory(
+                        nation,
+                        cleaned,
+                        response
+                    )
 
                     seen_posts.add(post_id)
 
