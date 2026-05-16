@@ -16,22 +16,22 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/3.0 "
-        "(NationStates RMB assistant; contact: dev)"
+        "ChatBotTCS/4.0 "
+        "(NationStates RMB research bot)"
     )
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
-# ERROR
+# ERROR CLASS
 # =========================
 
 class AIModelError(Exception):
     pass
 
 # =========================
-# CLEANER
+# CLEAN BBCode
 # =========================
 
 def clean_bbcode(text):
@@ -58,7 +58,7 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# GEMINI
+# GEMINI API
 # =========================
 
 def call_gemini(prompt):
@@ -86,7 +86,9 @@ def call_gemini(prompt):
                 "contents": [
                     {
                         "parts": [
-                            {"text": prompt}
+                            {
+                                "text": prompt
+                            }
                         ]
                     }
                 ]
@@ -107,12 +109,10 @@ def call_gemini(prompt):
                 last_error = data
                 continue
 
-            text = (
+            return (
                 data["candidates"][0]
                 ["content"]["parts"][0]["text"]
             )
-
-            return text
 
         except Exception as e:
             last_error = e
@@ -122,12 +122,15 @@ def call_gemini(prompt):
     )
 
 # =========================
-# SMART RELEVANCE FILTER
+# RELEVANCE FILTER
 # =========================
 
 def relevant_sentences(text, query):
 
-    keywords = re.findall(r"\w+", query.lower())
+    keywords = re.findall(
+        r"\w+",
+        query.lower()
+    )
 
     sentences = re.split(
         r'(?<=[.!?]) +',
@@ -136,26 +139,27 @@ def relevant_sentences(text, query):
 
     good = []
 
-    for s in sentences:
+    for sentence in sentences:
 
-        s_lower = s.lower()
+        s = sentence.lower()
 
         score = 0
 
-        for k in keywords:
-            if k in s_lower:
+        for keyword in keywords:
+
+            if keyword in s:
                 score += 1
 
         if score >= 1:
-            good.append(s)
+            good.append(sentence)
 
     if not good:
-        return text[:500]
+        return text[:700]
 
-    return " ".join(good[:8])
+    return " ".join(good[:10])
 
 # =========================
-# MULTI WIKI SEARCH
+# MULTI-PAGE WIKI SEARCH
 # =========================
 
 def wiki_search(query):
@@ -167,6 +171,10 @@ def wiki_search(query):
         search_url = (
             "https://en.wikipedia.org/w/api.php"
         )
+
+        # =========================
+        # SEARCH ARTICLES
+        # =========================
 
         r = requests.get(
             search_url,
@@ -201,6 +209,10 @@ def wiki_search(query):
 
         collected = []
 
+        # =========================
+        # GET ARTICLE EXTRACTS
+        # =========================
+
         for result in results:
 
             try:
@@ -209,42 +221,57 @@ def wiki_search(query):
 
                 print("📘 ARTICLE:", title)
 
-                summary_url = (
-                    "https://en.wikipedia.org/api/rest_v1/page/summary/"
-                    + title.replace(" ", "_")
-                )
-
                 r2 = requests.get(
-                    summary_url,
+                    search_url,
+                    params={
+                        "action": "query",
+                        "prop": "extracts",
+                        "exintro": True,
+                        "explaintext": True,
+                        "titles": title,
+                        "format": "json"
+                    },
                     headers=HEADERS,
-                    timeout=10
+                    timeout=15
                 )
-
-                if r2.status_code != 200:
-                    continue
 
                 try:
                     data2 = r2.json()
                 except:
                     continue
 
-                extract = data2.get("extract", "")
-
-                if not extract:
-                    continue
-
-                # =========================
-                # RELEVANCE FILTER
-                # =========================
-
-                extract = relevant_sentences(
-                    extract,
-                    query
+                pages = (
+                    data2.get("query", {})
+                    .get("pages", {})
                 )
 
-                collected.append(
-                    f"{title}: {extract}"
-                )
+                for page_id in pages:
+
+                    page = pages[page_id]
+
+                    extract = page.get(
+                        "extract",
+                        ""
+                    )
+
+                    if not extract:
+                        continue
+
+                    # =========================
+                    # SMART FILTER
+                    # =========================
+
+                    extract = relevant_sentences(
+                        extract,
+                        query
+                    )
+
+                    if len(extract) < 40:
+                        continue
+
+                    collected.append(
+                        f"{title}:\n{extract}"
+                    )
 
             except Exception as e:
                 print("⚠️ ARTICLE ERROR:", e)
@@ -253,11 +280,7 @@ def wiki_search(query):
 
         final = "\n\n".join(collected)
 
-        # IMPORTANT:
-        # avoid gigantic prompts
-        final = final[:3000]
-
-        return final
+        return final[:4000]
 
     except Exception as e:
         print("💥 SEARCH ERROR:", e)
@@ -305,15 +328,16 @@ def ask_chatsearch(prompt):
 
     research = web_search(prompt)
 
-    print("\n🧠 FINAL RESEARCH:\n")
-    print(research[:1000])
+    print("\n🧠 RESEARCH DATA:\n")
+    print(research[:1500])
 
     system = (
         "You are a search assistant. "
-        "Answer the QUESTION directly and briefly using ONLY the research data. "
-        "Do not add unrelated background details. "
-        "Do not summarize history unless asked. "
-        "Prefer one direct answer."
+        "Answer ONLY using the research data. "
+        "Prioritize answering the CURRENT status first. "
+        "Be direct and concise. "
+        "Do not add unrelated history unless asked. "
+        "If uncertain, say you don't know."
     )
 
     final_prompt = (
@@ -446,9 +470,9 @@ def main():
 
                 msg = message.lower()
 
-                try:
+                response = None
 
-                    response = None
+                try:
 
                     # =========================
                     # NORMAL CHAT
@@ -494,6 +518,30 @@ def main():
                     response = response[:500]
 
                     print("\n💬 FINAL RESPONSE:")
+                    print(response)
+
+                    post_rmb(response)
+
+                    seen_posts.add(post_id)
+
+                    time.sleep(15)
+
+                except AIModelError as e:
+
+                    print("❌ AI FAILED:", e)
+
+        except Exception as e:
+
+            print("💥 LOOP ERROR:", e)
+
+        time.sleep(10)
+
+# =========================
+# START
+# =========================
+
+if __name__ == "__main__":
+    main()n💬 FINAL RESPONSE:")
                     print(response)
 
                     post_rmb(response)
