@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ET
 import time
 import os
 import re
+from datetime import datetime
 
 # =========================
 # CONFIG
@@ -16,12 +17,26 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/4.0 "
+        "ChatBotTCS/5.0 "
         "(NationStates RMB research bot)"
     )
 }
 
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
+
+# =========================
+# LOGGER
+# =========================
+
+def log(level, message):
+
+    now = datetime.now().strftime(
+        "%H:%M:%S"
+    )
+
+    print(
+        f"[{now}] [{level}] {message}"
+    )
 
 # =========================
 # ERROR CLASS
@@ -31,7 +46,7 @@ class AIModelError(Exception):
     pass
 
 # =========================
-# CLEAN BBCode
+# CLEAN TEXT
 # =========================
 
 def clean_bbcode(text):
@@ -75,7 +90,10 @@ def call_gemini(prompt):
 
         try:
 
-            print(f"\n🤖 TRYING MODEL: {model}")
+            log(
+                "AI",
+                f"Trying model: {model}"
+            )
 
             url = (
                 "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -100,22 +118,53 @@ def call_gemini(prompt):
                 timeout=30
             )
 
+            log(
+                "HTTP",
+                f"{model} status = {r.status_code}"
+            )
+
             try:
                 data = r.json()
-            except:
+            except Exception:
+
+                log(
+                    "ERROR",
+                    f"{model} returned invalid JSON"
+                )
+
                 continue
 
             if "candidates" not in data:
+
                 last_error = data
+
+                log(
+                    "ERROR",
+                    f"{model} failed: {str(data)[:300]}"
+                )
+
                 continue
 
-            return (
+            text = (
                 data["candidates"][0]
                 ["content"]["parts"][0]["text"]
             )
 
+            log(
+                "AI",
+                f"{model} success"
+            )
+
+            return text
+
         except Exception as e:
+
             last_error = e
+
+            log(
+                "ERROR",
+                f"{model} crashed: {e}"
+            )
 
     raise AIModelError(
         f"All models failed: {last_error}"
@@ -159,22 +208,21 @@ def relevant_sentences(text, query):
     return " ".join(good[:10])
 
 # =========================
-# MULTI-PAGE WIKI SEARCH
+# MULTI WIKI SEARCH
 # =========================
 
 def wiki_search(query):
 
-    print("\n🔎 SEARCH:", query)
+    log(
+        "SEARCH",
+        f"Searching: {query}"
+    )
 
     try:
 
         search_url = (
             "https://en.wikipedia.org/w/api.php"
         )
-
-        # =========================
-        # SEARCH ARTICLES
-        # =========================
 
         r = requests.get(
             search_url,
@@ -189,12 +237,25 @@ def wiki_search(query):
             timeout=15
         )
 
-        print("📡 SEARCH STATUS:", r.status_code)
+        log(
+            "HTTP",
+            f"Wikipedia search status = {r.status_code}"
+        )
 
         try:
             data = r.json()
         except Exception:
-            print("❌ SEARCH NOT JSON")
+
+            log(
+                "ERROR",
+                "Wikipedia returned invalid JSON"
+            )
+
+            log(
+                "DEBUG",
+                r.text[:500]
+            )
+
             return ""
 
         results = (
@@ -202,16 +263,15 @@ def wiki_search(query):
             .get("search", [])
         )
 
-        print("📦 RESULTS:", len(results))
+        log(
+            "SEARCH",
+            f"Results found = {len(results)}"
+        )
 
         if not results:
             return ""
 
         collected = []
-
-        # =========================
-        # GET ARTICLE EXTRACTS
-        # =========================
 
         for result in results:
 
@@ -219,7 +279,10 @@ def wiki_search(query):
 
                 title = result["title"]
 
-                print("📘 ARTICLE:", title)
+                log(
+                    "ARTICLE",
+                    f"Checking: {title}"
+                )
 
                 r2 = requests.get(
                     search_url,
@@ -238,6 +301,12 @@ def wiki_search(query):
                 try:
                     data2 = r2.json()
                 except:
+
+                    log(
+                        "WARN",
+                        f"Invalid JSON for {title}"
+                    )
+
                     continue
 
                 pages = (
@@ -255,11 +324,13 @@ def wiki_search(query):
                     )
 
                     if not extract:
-                        continue
 
-                    # =========================
-                    # SMART FILTER
-                    # =========================
+                        log(
+                            "WARN",
+                            f"No extract for {title}"
+                        )
+
+                        continue
 
                     extract = relevant_sentences(
                         extract,
@@ -267,23 +338,46 @@ def wiki_search(query):
                     )
 
                     if len(extract) < 40:
+
+                        log(
+                            "WARN",
+                            f"Extract too short for {title}"
+                        )
+
                         continue
 
                     collected.append(
                         f"{title}:\n{extract}"
                     )
 
-            except Exception as e:
-                print("⚠️ ARTICLE ERROR:", e)
+                    log(
+                        "ARTICLE",
+                        f"Added: {title}"
+                    )
 
-        print("🧠 COLLECTED:", len(collected))
+            except Exception as e:
+
+                log(
+                    "ERROR",
+                    f"Article failed: {e}"
+                )
 
         final = "\n\n".join(collected)
+
+        log(
+            "SEARCH",
+            f"Collected articles = {len(collected)}"
+        )
 
         return final[:4000]
 
     except Exception as e:
-        print("💥 SEARCH ERROR:", e)
+
+        log(
+            "CRASH",
+            f"Search crashed: {e}"
+        )
+
         return ""
 
 # =========================
@@ -295,6 +389,12 @@ def web_search(query):
     result = wiki_search(query)
 
     if not result:
+
+        log(
+            "SEARCH",
+            "No research found"
+        )
+
         return "No reliable information found."
 
     return result
@@ -328,15 +428,17 @@ def ask_chatsearch(prompt):
 
     research = web_search(prompt)
 
-    print("\n🧠 RESEARCH DATA:\n")
-    print(research[:1500])
+    log(
+        "RESEARCH",
+        research[:1000]
+    )
 
     system = (
         "You are a search assistant. "
         "Answer ONLY using the research data. "
-        "Prioritize answering the CURRENT status first. "
+        "Prioritize current information first. "
         "Be direct and concise. "
-        "Do not add unrelated history unless asked. "
+        "Do not add unrelated history. "
         "If uncertain, say you don't know."
     )
 
@@ -358,6 +460,11 @@ def ask_chatsearch(prompt):
 
 def post_rmb(text):
 
+    log(
+        "POST",
+        f"Posting RMB message ({len(text)} chars)"
+    )
+
     prepare_data = {
         "c": "rmbpost",
         "nation": NATION,
@@ -377,8 +484,17 @@ def post_rmb(text):
     )
 
     if "<SUCCESS>" not in r.text:
-        print("❌ PREPARE FAILED")
-        print(r.text)
+
+        log(
+            "ERROR",
+            "Prepare failed"
+        )
+
+        log(
+            "DEBUG",
+            r.text[:500]
+        )
+
         return
 
     token = (
@@ -390,7 +506,12 @@ def post_rmb(text):
     xpin = r.headers.get("X-Pin")
 
     if not xpin:
-        print("❌ NO XPIN")
+
+        log(
+            "ERROR",
+            "No X-Pin received"
+        )
+
         return
 
     execute_data = {
@@ -411,7 +532,10 @@ def post_rmb(text):
         timeout=20
     )
 
-    print("✅ POSTED:", r2.status_code)
+    log(
+        "POST",
+        f"Execute status = {r2.status_code}"
+    )
 
 # =========================
 # RMB READER
@@ -438,7 +562,10 @@ def get_messages():
 
 def main():
 
-    print("🚀 BOT STARTED")
+    log(
+        "START",
+        "Bot started"
+    )
 
     seen_posts = set()
 
@@ -451,6 +578,11 @@ def main():
             root = ET.fromstring(xml_data)
 
             posts = root.findall(".//POST")
+
+            log(
+                "RMB",
+                f"Posts fetched = {len(posts)}"
+            )
 
             for post in posts:
 
@@ -468,15 +600,16 @@ def main():
                 if post_id in seen_posts:
                     continue
 
+                log(
+                    "MESSAGE",
+                    f"{nation}: {message[:100]}"
+                )
+
                 msg = message.lower()
 
                 response = None
 
                 try:
-
-                    # =========================
-                    # NORMAL CHAT
-                    # =========================
 
                     if "#chatbot" in msg:
 
@@ -489,13 +622,14 @@ def main():
                         if not cleaned:
                             cleaned = "Hello"
 
+                        log(
+                            "MODE",
+                            "Normal chatbot mode"
+                        )
+
                         response = ask_chatbot(
                             cleaned
                         )
-
-                    # =========================
-                    # SEARCH MODE
-                    # =========================
 
                     elif "#chatsearch" in msg:
 
@@ -508,6 +642,11 @@ def main():
                         if not cleaned:
                             cleaned = "Hello"
 
+                        log(
+                            "MODE",
+                            "Search mode"
+                        )
+
                         response = ask_chatsearch(
                             cleaned
                         )
@@ -517,8 +656,10 @@ def main():
 
                     response = response[:500]
 
-                    print("\n💬 FINAL RESPONSE:")
-                    print(response)
+                    log(
+                        "FINAL",
+                        response
+                    )
 
                     post_rmb(response)
 
@@ -528,35 +669,17 @@ def main():
 
                 except AIModelError as e:
 
-                    print("❌ AI FAILED:", e)
+                    log(
+                        "ERROR",
+                        f"AI failed: {e}"
+                    )
 
         except Exception as e:
 
-            print("💥 LOOP ERROR:", e)
-
-        time.sleep(10)
-
-# =========================
-# START
-# =========================
-
-if __name__ == "__main__":
-    main()n💬 FINAL RESPONSE:")
-                    print(response)
-
-                    post_rmb(response)
-
-                    seen_posts.add(post_id)
-
-                    time.sleep(15)
-
-                except AIModelError as e:
-
-                    print("❌ AI FAILED:", e)
-
-        except Exception as e:
-
-            print("💥 LOOP ERROR:", e)
+            log(
+                "CRASH",
+                f"Loop crashed: {e}"
+            )
 
         time.sleep(10)
 
