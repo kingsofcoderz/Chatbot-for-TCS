@@ -17,7 +17,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/8.0 "
+        "ChatBotTCS/9.0 "
         "(NationStates RMB AI Bot)"
     )
 }
@@ -25,10 +25,11 @@ HEADERS = {
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
-# MEMORY
+# USER MEMORIES
 # =========================
 
-conversation_history = []
+user_memories = {}
+
 MAX_MEMORY = 8
 
 # =========================
@@ -85,38 +86,48 @@ def clean_bbcode(text):
 
 def save_memory(nation, user_msg, bot_msg):
 
-    global conversation_history
+    global user_memories
 
-    conversation_history.append({
-        "nation": nation,
+    nation = nation.lower()
+
+    if nation not in user_memories:
+
+        user_memories[nation] = []
+
+    user_memories[nation].append({
         "user": user_msg,
         "bot": bot_msg
     })
 
-    conversation_history = (
-        conversation_history[-MAX_MEMORY:]
+    user_memories[nation] = (
+        user_memories[nation][-MAX_MEMORY:]
     )
 
     log(
         "MEMORY",
-        f"Memory count = {len(conversation_history)}"
+        f"{nation} memory = "
+        f"{len(user_memories[nation])}"
     )
 
 # =========================
 # BUILD CONTEXT
 # =========================
 
-def build_context():
+def build_context(nation):
 
-    if not conversation_history:
+    nation = nation.lower()
+
+    if nation not in user_memories:
         return "No previous context."
+
+    memory = user_memories[nation]
 
     context = []
 
-    for item in conversation_history:
+    for item in memory:
 
         context.append(
-            f"{item['nation']} said: {item['user']}"
+            f"User said: {item['user']}"
         )
 
         context.append(
@@ -292,10 +303,6 @@ SEARCH QUERY:
 
 def relevant_sentences(text, query):
 
-    # =========================
-    # CLEAN QUERY
-    # =========================
-
     query_words = set(
         re.findall(
             r"\w+",
@@ -303,20 +310,12 @@ def relevant_sentences(text, query):
         )
     )
 
-    # =========================
-    # SPLIT SENTENCES
-    # =========================
-
     sentences = re.split(
         r'(?<=[.!?]) +',
         text
     )
 
     scored = []
-
-    # =========================
-    # SCORE SENTENCES
-    # =========================
 
     for sentence in sentences:
 
@@ -327,39 +326,19 @@ def relevant_sentences(text, query):
             )
         )
 
-        # -------------------------
-        # WORD OVERLAP
-        # -------------------------
-
         overlap = len(
             query_words & sentence_words
         )
-
-        # -------------------------
-        # NORMALIZED SCORE
-        # -------------------------
 
         score = overlap / (
             len(query_words) + 1
         )
 
-        # -------------------------
-        # EXACT QUERY BOOST
-        # -------------------------
-
         if query.lower() in sentence.lower():
             score += 1.5
 
-        # -------------------------
-        # LENGTH PENALTY
-        # -------------------------
-
         if len(sentence) > 400:
             score *= 0.7
-
-        # -------------------------
-        # VERY SHORT PENALTY
-        # -------------------------
 
         if len(sentence) < 25:
             score *= 0.5
@@ -367,10 +346,6 @@ def relevant_sentences(text, query):
         scored.append(
             (score, sentence)
         )
-
-    # =========================
-    # SORT BEST FIRST
-    # =========================
 
     scored.sort(
         reverse=True,
@@ -720,7 +695,7 @@ def post_rmb(text):
         NS_API,
         data=execute_data,
         headers=headers,
-        timeout=20
+       timeout=20
     )
 
     log(
@@ -775,8 +750,6 @@ def main():
                 f"Fetched {len(posts)} posts"
             )
 
-            context = build_context()
-
             for post in posts:
 
                 post_id = post.attrib.get("id")
@@ -792,6 +765,8 @@ def main():
 
                 if post_id in seen_posts:
                     continue
+
+                context = build_context(nation)
 
                 log(
                     "MESSAGE",
