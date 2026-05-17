@@ -144,8 +144,7 @@ def call_gemini(prompt):
 
     MODELS = [
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite-preview-06-17",
-        "gemini-1.5-flash"
+        "gemini-2.5-flash-lite-preview-06-17"
     ]
 
     last_error = None
