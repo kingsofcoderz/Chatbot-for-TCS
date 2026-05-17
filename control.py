@@ -1,11 +1,13 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify
 import os
 
 app = Flask(__name__)
 
-STATE_FILE = "bot_state.txt"
+# =========================
+# CONFIG
+# =========================
 
-# simple secret key (set in Railway env vars)
+STATE_FILE = "bot_state.txt"
 SECRET = os.getenv("ADMIN_SECRET", "change_me")
 
 
@@ -13,16 +15,17 @@ SECRET = os.getenv("ADMIN_SECRET", "change_me")
 # STATE HANDLING
 # =========================
 
-def set_state(state):
+def set_state(state: str):
     with open(STATE_FILE, "w") as f:
         f.write(state)
 
 
 def get_state():
     try:
-        return open(STATE_FILE).read().strip()
+        with open(STATE_FILE, "r") as f:
+            return f.read().strip()
     except:
-        return "on"
+        return "on"  # default state
 
 
 # =========================
@@ -31,37 +34,43 @@ def get_state():
 
 @app.route("/")
 def home():
-    return {
+    return jsonify({
         "bot_status": get_state(),
-        "usage": "/on?key=xxx or /off?key=xxx"
-    }
+        "endpoints": {
+            "on": "/on?key=YOUR_KEY",
+            "off": "/off?key=YOUR_KEY"
+        }
+    })
 
 
 @app.route("/on")
 def turn_on():
-
     if request.args.get("key") != SECRET:
-        return {"error": "unauthorized"}, 403
+        return jsonify({"error": "unauthorized"}), 403
 
     set_state("on")
-    return {"status": "BOT ON"}
+    return jsonify({"status": "BOT ON"})
 
 
 @app.route("/off")
 def turn_off():
-
     if request.args.get("key") != SECRET:
-        return {"error": "unauthorized"}, 403
+        return jsonify({"error": "unauthorized"}), 403
 
     set_state("off")
-    return {"status": "BOT OFF"}
+    return jsonify({"status": "BOT OFF"})
 
 
 # =========================
-# RUN (RAILWAY)
+# RAILWAY ENTRY POINT
 # =========================
 
 if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+
+    app.run(
+        host="0.0.0.0",
+        port=port,
+        debug=False
+    )
