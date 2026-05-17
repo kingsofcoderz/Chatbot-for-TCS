@@ -17,7 +17,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/7.0 "
+        "ChatBotTCS/8.0 "
         "(NationStates RMB AI Bot)"
     )
 }
@@ -80,7 +80,7 @@ def clean_bbcode(text):
     return text.strip()
 
 # =========================
-# MEMORY SAVE
+# SAVE MEMORY
 # =========================
 
 def save_memory(nation, user_msg, bot_msg):
@@ -126,7 +126,7 @@ def build_context():
     return "\n".join(context)
 
 # =========================
-# GEMINI
+# GEMINI API
 # =========================
 
 def call_gemini(prompt):
@@ -287,44 +287,128 @@ SEARCH QUERY:
         return query
 
 # =========================
-# RELEVANCE FILTER
+# RELEVANT SENTENCES
 # =========================
 
 def relevant_sentences(text, query):
 
-    keywords = re.findall(
-        r"\w+",
-        query.lower()
+    # =========================
+    # CLEAN QUERY
+    # =========================
+
+    query_words = set(
+        re.findall(
+            r"\w+",
+            query.lower()
+        )
     )
+
+    # =========================
+    # SPLIT SENTENCES
+    # =========================
 
     sentences = re.split(
         r'(?<=[.!?]) +',
         text
     )
 
-    good = []
+    scored = []
+
+    # =========================
+    # SCORE SENTENCES
+    # =========================
 
     for sentence in sentences:
 
-        s = sentence.lower()
+        sentence_words = set(
+            re.findall(
+                r"\w+",
+                sentence.lower()
+            )
+        )
 
-        score = 0
+        # -------------------------
+        # WORD OVERLAP
+        # -------------------------
 
-        for keyword in keywords:
+        overlap = len(
+            query_words & sentence_words
+        )
 
-            if keyword in s:
-                score += 1
+        # -------------------------
+        # NORMALIZED SCORE
+        # -------------------------
 
-        if score >= 1:
-            good.append(sentence)
+        score = overlap / (
+            len(query_words) + 1
+        )
 
-    if not good:
-        return text[:1000]
+        # -------------------------
+        # EXACT QUERY BOOST
+        # -------------------------
 
-    return " ".join(good[:12])
+        if query.lower() in sentence.lower():
+            score += 1.5
+
+        # -------------------------
+        # LENGTH PENALTY
+        # -------------------------
+
+        if len(sentence) > 400:
+            score *= 0.7
+
+        # -------------------------
+        # VERY SHORT PENALTY
+        # -------------------------
+
+        if len(sentence) < 25:
+            score *= 0.5
+
+        scored.append(
+            (score, sentence)
+        )
+
+    # =========================
+    # SORT BEST FIRST
+    # =========================
+
+    scored.sort(
+        reverse=True,
+        key=lambda x: x[0]
+    )
+
+    best = []
+
+    for score, sentence in scored:
+
+        if score <= 0:
+            continue
+
+        best.append(sentence)
+
+        if len(best) >= 12:
+            break
+
+    if not best:
+
+        log(
+            "SEARCH",
+            "No relevant sentences"
+        )
+
+        return text[:1200]
+
+    final = " ".join(best)
+
+    log(
+        "SEARCH",
+        f"Selected {len(best)} sentences"
+    )
+
+    return final
 
 # =========================
-# WIKI SEARCH
+# WIKIPEDIA SEARCH
 # =========================
 
 def wiki_search(query):
@@ -540,10 +624,9 @@ def ask_chatsearch(prompt, context):
         "You are a search assistant.\n"
         "Answer using the research data.\n"
         "Use context if needed.\n"
-        "Prioritize current information.\n"
         "Be concise and direct.\n"
         "Do not invent facts.\n"
-        "If multiple answers exist, pick the most likely current one."
+        "If unsure, say you are unsure."
     )
 
     final_prompt = (
@@ -646,7 +729,7 @@ def post_rmb(text):
     )
 
 # =========================
-# RMB FETCH
+# FETCH RMB
 # =========================
 
 def get_messages():
