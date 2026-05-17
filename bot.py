@@ -18,7 +18,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 HEADERS = {
     "User-Agent": (
         "ChatBotTCS/1.0 "
-        "(NationStates RMB AI Bot)"
+        "(NationStates RMB AI Bot by Shabarish)"
     )
 }
 
@@ -30,7 +30,7 @@ NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 user_memories = {}
 
-MAX_MEMORY = 8
+MAX_MEMORY = 5
 
 # =========================
 # LOGGER
@@ -62,21 +62,47 @@ def clean_bbcode(text):
     if not text:
         return "..."
 
+    text = text.replace("\n", " ")
+
     blocked = [
         "**",
-        "__",
-        "[img]",
-        "[/img]",
-        "[url]",
-        "[/url]",
-        "[quote]",
-        "[/quote]"
+        "__"
     ]
 
-    for tag in blocked:
-        text = text.replace(tag, "")
+    for item in blocked:
+        text = text.replace(item, "")
 
-    text = text.replace("\n", " ")
+    return text.strip()
+
+# =========================
+# SANITIZE BBCODE
+# =========================
+
+def sanitize_bbcode(text):
+
+    allowed = [
+        "b",
+        "i",
+        "u",
+        "nation",
+        "region"
+    ]
+
+    tags = re.findall(
+        r"\[/?([a-zA-Z]+).*?\]",
+        text
+    )
+
+    for tag in tags:
+
+        if tag.lower() not in allowed:
+
+            text = re.sub(
+                rf"\[/?{tag}.*?\]",
+                "",
+                text,
+                flags=re.IGNORECASE
+            )
 
     return text.strip()
 
@@ -143,8 +169,15 @@ def build_context(nation):
 def call_gemini(prompt):
 
     MODELS = [
+
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite-preview-06-17"
+
+        "gemini-2.5-flash-lite-preview-06-17",
+
+        "gemini-2.0-flash",
+
+        "gemini-2.0-flash-lite"
+
     ]
 
     last_error = None
@@ -557,9 +590,23 @@ def web_search(query):
 def ask_chatbot(prompt, context):
 
     system = (
-        "You are ChatBotTCS on NationStates RMB. "
-        "Be short, friendly, and natural. "
-        "Use BBCode only."
+        "You are ChatBotTCS on NationStates RMB.\n"
+        "Be short, friendly, and natural.\n\n"
+        "Allowed BBCode tags ONLY:\n"
+        "[b]\n"
+        "[i]\n"
+        "[u]\n"
+        "[nation]\n"
+        "[region]\n\n"
+        "Forbidden tags:\n"
+        "[color]\n"
+        "[size]\n"
+        "[quote]\n"
+        "[url]\n"
+        "[img]\n"
+        "[list]\n"
+        "[*]\n\n"
+        "Never use markdown."
     )
 
     final_prompt = (
@@ -598,7 +645,14 @@ def ask_chatsearch(prompt, context):
         "You are a search assistant.\n"
         "Answer using the research data.\n"
         "Use context if needed.\n"
-        "Be concise and direct.\n"
+        "Be concise and direct.\n\n"
+        "Allowed BBCode tags ONLY:\n"
+        "[b]\n"
+        "[i]\n"
+        "[u]\n"
+        "[nation]\n"
+        "[region]\n\n"
+        "Do NOT use any other BBCode tags.\n"
         "Do not invent facts.\n"
         "If unsure, say you are unsure."
     )
@@ -694,7 +748,7 @@ def post_rmb(text):
         NS_API,
         data=execute_data,
         headers=headers,
-       timeout=20
+        timeout=20
     )
 
     log(
@@ -821,6 +875,31 @@ def main():
                     else:
                         continue
 
+                    # =========================
+                    # SANITIZE
+                    # =========================
+
+                    response = sanitize_bbcode(
+                        response
+                    )
+
+                    # =========================
+                    # REPLY HEADER
+                    # =========================
+
+                    reply_header = (
+                        f"Replying to "
+                        f"[nation]{nation}[/nation]\n\n"
+                    )
+
+                    response = (
+                        reply_header + response
+                    )
+
+                    # =========================
+                    # LIMIT
+                    # =========================
+
                     response = response[:500]
 
                     log(
@@ -838,7 +917,7 @@ def main():
 
                     seen_posts.add(post_id)
 
-                    time.sleep(15)
+                    time.sleep(20)
 
                 except AIModelError as e:
 
