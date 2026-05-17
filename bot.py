@@ -22,6 +22,12 @@ HEADERS = {
     )
 }
 
+def bot_enabled():
+    try:
+        return open("bot_state.txt").read().strip() == "on"
+    except:
+        return True
+
 NS_API = "https://www.nationstates.net/cgi-bin/api.cgi"
 
 # =========================
@@ -778,13 +784,9 @@ def get_messages():
 # =========================
 # MAIN LOOP
 # =========================
-
 def main():
 
-    log(
-        "START",
-        "Bot started"
-    )
+    log("START", "Bot started")
 
     seen_posts = set()
 
@@ -792,16 +794,25 @@ def main():
 
         try:
 
+            # =========================
+            # CONTROL CHECK
+            # =========================
+            if not bot_enabled():
+                log("CONTROL", "BOT OFF")
+                time.sleep(5)
+                continue
+
+            log("CONTROL", "BOT ON")
+
+            # =========================
+            # FETCH MESSAGES
+            # =========================
             xml_data = get_messages()
 
             root = ET.fromstring(xml_data)
-
             posts = root.findall(".//POST")
 
-            log(
-                "RMB",
-                f"Fetched {len(posts)} posts"
-            )
+            log("RMB", f"Fetched {len(posts)} posts")
 
             for post in posts:
 
@@ -819,119 +830,64 @@ def main():
                 if post_id in seen_posts:
                     continue
 
+                seen_posts.add(post_id)
+
                 context = build_context(nation)
 
-                log(
-                    "MESSAGE",
-                    f"{nation}: {message[:120]}"
-                )
+                log("MESSAGE", f"{nation}: {message[:120]}")
 
                 msg = message.lower()
 
                 response = None
 
-                try:
+                # =========================
+                # CHATBOT MODE
+                # =========================
+                if "#chatbot" in msg:
 
-                    # =========================
-                    # CHATBOT MODE
-                    # =========================
+                    cleaned = message.replace("#chatbot", "").strip()
+                    if not cleaned:
+                        cleaned = "Hello"
 
-                    if "#chatbot" in msg:
+                    response = ask_chatbot(cleaned, context)
 
-                        cleaned = (
-                            message
-                            .replace("#chatbot", "")
-                            .strip()
-                        )
+                # =========================
+                # SEARCH MODE
+                # =========================
+                elif "#chatsearch" in msg:
 
-                        if not cleaned:
-                            cleaned = "Hello"
+                    cleaned = message.replace("#chatsearch", "").strip()
+                    if not cleaned:
+                        cleaned = "Hello"
 
-                        response = ask_chatbot(
-                            cleaned,
-                            context
-                        )
+                    response = ask_chatsearch(cleaned, context)
 
-                    # =========================
-                    # SEARCH MODE
-                    # =========================
+                else:
+                    continue
 
-                    elif "#chatsearch" in msg:
+                # =========================
+                # SAFETY CLEAN
+                # =========================
+                response = sanitize_bbcode(response)
 
-                        cleaned = (
-                            message
-                            .replace("#chatsearch", "")
-                            .strip()
-                        )
+                final = (
+                    f"Replying to [nation]{nation}[/nation]\n\n"
+                    f"{response}"
+                )[:500]
 
-                        if not cleaned:
-                            cleaned = "Hello"
+                log("FINAL", final)
 
-                        response = ask_chatsearch(
-                            cleaned,
-                            context
-                        )
+                post_rmb(final)
 
-                    else:
-                        continue
+                save_memory(nation, cleaned, response)
 
-                    # =========================
-                    # SANITIZE
-                    # =========================
+                time.sleep(20)
 
-                    response = sanitize_bbcode(
-                        response
-                    )
-
-                    # =========================
-                    # REPLY HEADER
-                    # =========================
-
-                    reply_header = (
-                        f"Replying to "
-                        f"[nation]{nation}[/nation]\n\n"
-                    )
-
-                    response = (
-                        reply_header + response
-                    )
-
-                    # =========================
-                    # LIMIT
-                    # =========================
-
-                    response = response[:500]
-
-                    log(
-                        "FINAL",
-                        response
-                    )
-
-                    post_rmb(response)
-
-                    save_memory(
-                        nation,
-                        cleaned,
-                        response
-                    )
-
-                    seen_posts.add(post_id)
-
-                    time.sleep(20)
-
-                except AIModelError as e:
-
-                    log(
-                        "ERROR",
-                        f"AI failed: {e}"
-                    )
+        except AIModelError as e:
+            log("AI ERROR", str(e))
 
         except Exception as e:
-
-            log(
-                "CRASH",
-                f"Main loop crashed: {e}"
-            )
+            log("CRASH", str(e))
 
         time.sleep(10)
 
