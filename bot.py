@@ -10,14 +10,14 @@ from datetime import datetime
 # =========================
 
 NATION = "chatbottcs"
-REGION = "chatbot_of_the_citrus_sea"
+REGION = "the_citrus_sea"
 
 PASSWORD = os.getenv("PASSWORD", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 HEADERS = {
     "User-Agent": (
-        "ChatBotTCS/9.0 "
+        "ChatBotTCS/1.0 "
         "(NationStates RMB AI Bot)"
     )
 }
