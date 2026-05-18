@@ -376,6 +376,8 @@ def wiki_search(query):
 
         return ""
 
+seen_posts = set()
+
 def get_messages():
     url = f"{NS_API}?region={REGION}&q=messages"
     r = requests.get(url, headers=HEADERS)
