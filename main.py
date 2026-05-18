@@ -104,40 +104,94 @@ class AIModelError(Exception):
 def call_gemini(prompt):
 
     MODELS = [
+
         "gemini-2.5-flash",
+
         "gemini-2.5-flash-lite-preview-06-17",
+
         "gemini-2.0-flash",
+
         "gemini-2.0-flash-lite"
+
     ]
 
     last_error = None
 
     for model in MODELS:
-        try:
-            log("AI", f"Trying {model}")
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        try:
+
+            log(
+                "AI",
+                f"Trying {model}"
+            )
+
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={GEMINI_API_KEY}"
+            )
 
             payload = {
-                "contents": [{
-                    "parts": [{"text": prompt}]
-                }]
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ]
             }
 
-            r = requests.post(url, json=payload, timeout=30)
-            data = r.json()
+            r = requests.post(
+                url,
+                json=payload,
+                timeout=30
+            )
 
+            log(
+                "HTTP",
+                f"{model} -> {r.status_code}"
+            )
+
+            try:
+                data = r.json()
+            except Exception:
+                log(
+                    "ERROR",
+                    f"{model} returned invalid JSON"
+                )
+                log(
+                    "DEBUG",
+                    r.text[:500]
+                )
+                continue
             if "candidates" not in data:
                 last_error = data
+                log(
+                    "ERROR",
+                    str(data)[:500]
+                )
                 continue
-
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-
+            text = (
+                data["candidates"][0]
+                ["content"]["parts"][0]["text"]
+            )
+            log(
+                "AI",
+                f"{model} success"
+            )
+            return text
         except Exception as e:
             last_error = e
-            log("ERROR", f"{model} failed: {e}")
+            log(
+                "ERROR",
+                f"{model} crashed: {e}"
+            )
 
-    raise AIModelError(f"All models failed: {last_error}")
+    raise AIModelError(
+        f"All models failed: {last_error}"
+)
 
 CHATBOT_SYSTEM = """
 You are ChatBotTCS on NationStates RMB.
