@@ -264,43 +264,117 @@ def relevant_sentences(text, query):
 
     return " ".join([s for _, s in scored[:10]]) or text[:1200]
 
-
 def wiki_search(query):
 
-    url = "https://en.wikipedia.org/w/api.php"
+    log("SEARCH", f"Searching: {query}")
 
-    r = requests.get(url, params={
-        "action": "query",
-        "list": "search",
-        "srsearch": query,
-        "format": "json"
-    })
+    try:
 
-    data = r.json()
-    results = data.get("query", {}).get("search", [])
+        url = "https://en.wikipedia.org/w/api.php"
 
-    if not results:
+        r = requests.get(
+            url,
+            params={
+                "action": "query",
+                "list": "search",
+                "srsearch": query,
+                "format": "json",
+                "srlimit": 3
+            },
+            headers=HEADERS,
+            timeout=15
+        )
+
+        log("HTTP", f"Wikipedia search = {r.status_code}")
+
+        try:
+            data = r.json()
+
+        except Exception:
+
+            log("ERROR", "Wikipedia search invalid JSON")
+            log("DEBUG", r.text[:500])
+
+            return ""
+
+        results = data.get("query", {}).get("search", [])
+
+        log("SEARCH", f"Results = {len(results)}")
+
+        if not results:
+            return ""
+
+        collected = []
+
+        for result in results:
+
+            try:
+
+                title = result["title"]
+
+                log("ARTICLE", f"Checking {title}")
+
+                r2 = requests.get(
+                    url,
+                    params={
+                        "action": "query",
+                        "prop": "extracts",
+                        "explaintext": True,
+                        "titles": title,
+                        "format": "json"
+                    },
+                    headers=HEADERS,
+                    timeout=15
+                )
+
+                try:
+                    data2 = r2.json()
+
+                except Exception:
+
+                    log("ERROR", "Wikipedia extract invalid JSON")
+                    log("DEBUG", r2.text[:500])
+
+                    continue
+
+                pages = data2.get("query", {}).get("pages", {})
+
+                for page in pages.values():
+
+                    extract = page.get("extract", "")
+
+                    if not extract:
+                        continue
+
+                    extract = relevant_sentences(
+                        extract,
+                        query
+                    )
+
+                    if len(extract) < 50:
+                        continue
+
+                    collected.append(
+                        f"{title}:\n{extract}"
+                    )
+
+                    log("ARTICLE", f"Added {title}")
+
+            except Exception as e:
+
+                log("ERROR", f"Article failed: {e}")
+
+        final = "\n\n".join(collected)
+
+        log("SEARCH", f"Collected = {len(collected)}")
+
+        return final[:5000]
+
+    except Exception as e:
+
+        log("CRASH", f"Search crashed: {e}")
+
         return ""
-
-    title = results[0]["title"]
-
-    r2 = requests.get(url, params={
-        "action": "query",
-        "prop": "extracts",
-        "explaintext": True,
-        "titles": title,
-        "format": "json"
-    })
-
-    pages = r2.json()["query"]["pages"]
-
-    for p in pages.values():
-        return relevant_sentences(p.get("extract", ""), query)
-
-    return ""
-
-seen_posts = set()
-
 
 def get_messages():
     url = f"{NS_API}?region={REGION}&q=messages"
